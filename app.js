@@ -212,16 +212,18 @@ const state = {
   session: {
     active: false,
     startTime: null,           // wall-clock ms when session started
-    studyTime: 0,              // accumulated study time in ms
+    studyStartedAt: null,      // wall-clock ms when the current study run began (null if paused)
+    accStudyMs: 0,             // study ms accumulated before the current run
+    studyTime: 0,              // total study ms = accStudyMs + (now - studyStartedAt) when studying
     sessionTime: 0,            // total session duration in ms
-    unverifiedTime: 0,         // time spent in background where detection couldn't run
+    unverifiedTime: 0,         // time where detection stalled (tab backgrounded)
     distractions: {
       lookAway: 0,
       away: 0,
       lidClosed: 0,
     },
     pauses: [],                // array of { start, end, type }
-    lastStudyTimestamp: null,   // last wall-clock moment we were studying
+    lastStudyTimestamp: null,
   },
 
   // ── Worker ──
@@ -245,8 +247,18 @@ const SENSITIVITY = {
 // ── Detection interval (ms) — ~5 fps ──
 const DETECTION_INTERVAL_MS = 200;
 
-// ── Resume requires facing screen for this many ms ──
-const RESUME_FACE_DURATION_MS = 2000;
+// All pause/resume thresholds come from this config object so there
+// are no magic numbers scattered through the code.
+const CONFIG = {
+  // User must face screen for this long before we resume the timer.
+  resumeDelayMs: 2000,
+  // A heartbeat gap bigger than this means the laptop was asleep / lid closed.
+  lidGapMs: 8000,
+  // Cap a single tick at this to avoid huge jumps after a stall.
+  maxTickMs: 2000,
+  // Detection is considered stalled if no frame arrived in this window.
+  stallThresholdMs: 2500,
+};
 
 
 // ═══════════════════════════════════════════════
@@ -544,13 +556,13 @@ function setStatus(status, text) {
     'idle':          'Ready to study',
     'calibrating':   'Calibrating…',
     'studying':      'Studying',
-    'looking-away':  'Looking away',
-    'away':          'Away',
-    'lid-closed':    'Lid closed',
+    'looking-away':  'Paused: looking away',
+    'away':          'Paused: away',
+    'lid-closed':    'Paused: lid closed or sleep',
   };
   const displayText = text || defaultTexts[status] || status;
   DOM.statusText.textContent = displayText;
-  
+
   DOM.liveStatusChip.setAttribute('data-status', status);
   DOM.liveStatusText.textContent = displayText;
 
@@ -565,8 +577,8 @@ function setStatus(status, text) {
     DOM.timerDisplay.classList.remove('active', 'paused');
   }
 
-  updatePiP(); // Sync to PiP window if open
-  logEvent(`Status changed to ${status}`);
+  updatePiP();
+  logEvent(`Status: ${displayText}`);
 }
 
 // ═══════════════════════════════════════════════
@@ -773,16 +785,11 @@ function stopCamera() {
  * an external webcam, or revokes camera permission.
  */
 function handleCameraTrackEnded() {
-  console.log('📷 Camera track ended (lid closed / camera lost)');
-
-  if (state.session.active && state.status !== 'idle') {
-    // Back-date the pause to when camera was last working
-    const now = Date.now();
-    state.headPose.faceDetected = false;
+  if (state.session.active && state.status !== 'idle' && state.status !== 'lid-closed') {
+    // Freeze study time at this exact moment before transitioning.
+    freezeStudyTime(Date.now());
     setStatus('lid-closed');
     showAlert('paused', '💤', '<strong>Camera lost.</strong> Timer paused. Reopen and I\'ll welcome you back.');
-
-    // Distraction count
     state.session.distractions.lidClosed++;
     updateSessionStatsDisplay();
   }
@@ -1246,13 +1253,10 @@ function processDetectionResult(faceDetected, facingScreen) {
 
       const lookawayDuration = (now - hp.lookAwayStart) / 1000;
       if (lookawayDuration >= state.settings.lookawayTime) {
-        // Transition to looking-away
+        // Freeze study time back-dated to the moment the user actually looked away.
+        freezeStudyTime(hp.lookAwayStart);
         setStatus('looking-away');
         state.session.distractions.lookAway++;
-        
-        // BACK-DATE: Subtract the waiting time so the pause starts exactly when you looked away
-        state.session.studyTime = Math.max(0, state.session.studyTime - (now - hp.lookAwayStart));
-        
         triggerNudge('lookAway');
         updateSessionStatsDisplay();
       }
@@ -1269,13 +1273,10 @@ function processDetectionResult(faceDetected, facingScreen) {
 
       const awayDuration = (now - hp.awayStart) / 1000;
       if (awayDuration >= state.settings.awayTime) {
-        // Transition to away
+        // Freeze study time back-dated to when the face was first lost.
+        freezeStudyTime(hp.awayStart);
         setStatus('away');
         state.session.distractions.away++;
-        
-        // BACK-DATE: Subtract the waiting time
-        state.session.studyTime = Math.max(0, state.session.studyTime - (now - hp.awayStart));
-        
         triggerNudge('away');
         updateSessionStatsDisplay();
       }
@@ -1293,10 +1294,11 @@ function processDetectionResult(faceDetected, facingScreen) {
       }
 
       const facingDuration = now - hp.facingScreenSince;
-      if (facingDuration >= RESUME_FACE_DURATION_MS) {
-        // Resume studying!
+      if (facingDuration >= CONFIG.resumeDelayMs) {
         hp.lookAwayStart = 0;
         hp.awayStart = 0;
+        // Mark this wall-clock moment as when study resumed.
+        resumeStudyTime(now);
         setStatus('studying');
         triggerNudge('resumed');
       }
@@ -1306,6 +1308,38 @@ function processDetectionResult(faceDetected, facingScreen) {
     }
     return;
   }
+}
+
+// ═══════════════════════════════════════════════
+// 19B. TIMER ANCHORING — freeze and resume
+// ═══════════════════════════════════════════════
+
+/**
+ * Freeze the study timer at an exact past timestamp.
+ *
+ * WHY: Instead of subtracting from studyTime after the fact (which
+ * can drift when tick gaps are capped), we compute the exact amount
+ * of study time that elapsed before the pause started and store it
+ * in accStudyMs. studyStartedAt is cleared to signal "paused".
+ *
+ * @param {number} pauseAt — wall-clock ms when the pause actually began
+ */
+function freezeStudyTime(pauseAt) {
+  const s = state.session;
+  if (s.studyStartedAt === null) return; // already frozen
+  // Add only the time from when study last resumed up to the pause moment.
+  s.accStudyMs += Math.max(0, pauseAt - s.studyStartedAt);
+  s.studyTime = s.accStudyMs;
+  s.studyStartedAt = null; // paused
+}
+
+/**
+ * Resume the study timer from an exact timestamp.
+ * @param {number} resumeAt — wall-clock ms when study resumed
+ */
+function resumeStudyTime(resumeAt) {
+  state.session.studyStartedAt = resumeAt;
+  // accStudyMs stays as-is; handleTick will recompute studyTime live.
 }
 
 
@@ -1387,12 +1421,12 @@ function handleTick(data) {
   updatePipeline('Worker', true);
 
   // ── Detect lid close via heartbeat gap ──
-  // If the gap between ticks is > 8 seconds, the laptop was probably asleep.
-  // (Normal gap is ~1000ms. Sleep/lid close causes much longer gaps.)
-  if (gap > 8000 && state.session.active && state.status !== 'idle') {
-    console.log(`⚡ Heartbeat gap detected: ${gap}ms (lid closed / sleep)`);
+  // A gap much bigger than 1 s means the laptop was asleep or the lid was closed.
+  if (gap > CONFIG.lidGapMs && state.session.active && state.status !== 'idle') {
 
     if (state.status !== 'lid-closed') {
+      // Freeze study time at the last known tick (best approximation of when sleep started).
+      freezeStudyTime(state.lastTickTimestamp);
       setStatus('lid-closed');
       state.headPose.faceDetected = false;
       state.headPose.facingScreenSince = 0;
@@ -1405,48 +1439,44 @@ function handleTick(data) {
 
       const msg = `You were away for about ${awayText}. Timer was paused.`;
       showAlert('welcome-back', '👋', `<strong>Welcome back!</strong> ${msg}`);
-      
       playSoftChime();
       if (state.settings.notificationsOn && Notification.permission === 'granted') {
-        new Notification("AI Spectator", { body: `Welcome back! ${msg}`, icon: './icons/icon-192.png' });
+        new Notification('AI Spectator', { body: `Welcome back! ${msg}`, icon: './icons/icon-192.png' });
       }
-      
       updateSessionStatsDisplay();
     }
   }
 
   // ── Update timer display ──
   if (state.session.active) {
-    const sessionElapsed = now - state.session.startTime;
-    state.session.sessionTime = sessionElapsed;
+    state.session.sessionTime = now - state.session.startTime;
 
-    // Check if detection loop has stalled (e.g., tab backgrounded without PiP)
-    // If we haven't seen a detection frame in 2.5 seconds, we are stalled.
-    const isStalled = state.camera.isDetecting && (now - state.camera.lastDetectionTime > 2500);
+    // Recompute studyTime from the wall-clock anchor so there is one source of truth.
+    if (state.status === 'studying' && state.session.studyStartedAt !== null) {
+      const isStalled = state.camera.isDetecting &&
+                        (now - state.camera.lastDetectionTime > CONFIG.stallThresholdMs);
 
-    // Only count study time when status is 'studying'
-    if (state.status === 'studying') {
-      // Add the time since last tick (wall-clock)
-      const tickDuration = Math.min(gap, 2000); // cap at 2s to avoid jumps
-      
       if (isStalled) {
-        // Unverified time: backgrounded and Chrome throttled our detection loop
-        state.session.unverifiedTime += tickDuration;
+        // Tab is backgrounded and detection stopped. Freeze the anchor so we
+        // don't count unverified time, but track how much was skipped.
+        state.session.unverifiedTime += gap;
+        // Keep studyStartedAt fixed — do not advance accStudyMs yet.
       } else {
-        state.session.studyTime += tickDuration;
+        state.session.studyTime = state.session.accStudyMs +
+                                  (now - state.session.studyStartedAt);
       }
-      state.session.lastStudyTimestamp = now;
     }
 
-    // Update the display
     DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
     updateSessionStatsDisplay();
-    updatePiP(); // Sync to PiP window if open
-    
-    // Live Panel Updates
+    updatePiP();
+
     DOM.liveSession.textContent = Math.round(state.session.sessionTime / 1000);
-    DOM.liveStudy.textContent = Math.round(state.session.studyTime / 1000);
-    DOM.livePauses.textContent = state.session.distractions.lookAway + state.session.distractions.away + state.session.distractions.lidClosed;
+    DOM.liveStudy.textContent   = Math.round(state.session.studyTime   / 1000);
+    DOM.livePauses.textContent  =
+      state.session.distractions.lookAway +
+      state.session.distractions.away +
+      state.session.distractions.lidClosed;
   }
 
   state.lastTickTimestamp = now;
@@ -1523,6 +1553,8 @@ async function handleStart() {
   state.session = {
     active: true,
     startTime: now,
+    studyStartedAt: now,   // study run begins immediately after calibration
+    accStudyMs: 0,
     studyTime: 0,
     sessionTime: 0,
     unverifiedTime: 0,
