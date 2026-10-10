@@ -1035,15 +1035,17 @@ async function runCalibration() {
  */
 function startDetectionLoop() {
   state.camera.isDetecting = true;
+  // Initialise to 0 so the very first frame is processed immediately
   state.camera.lastDetectionTime = 0;
-  state.headPose.buffer = []; // Clear smoothing buffer
+  state.headPose.buffer = [];
 
-  function loop(timestamp) {
+  function loop() {
     if (!state.camera.isDetecting) return;
 
-    // Throttle to ~5 fps
-    if (timestamp - state.camera.lastDetectionTime >= DETECTION_INTERVAL_MS) {
-      state.camera.lastDetectionTime = timestamp;
+    // Throttle to ~5 fps using wall-clock time so it matches the stall check
+    const now = Date.now();
+    if (now - state.camera.lastDetectionTime >= DETECTION_INTERVAL_MS) {
+      state.camera.lastDetectionTime = now; // wall-clock ms — same unit as Date.now()
       runDetection();
     }
 
