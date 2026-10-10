@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <!-- ====== Meta ====== -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="AI Spectator — Track your real study time using webcam focus detection. Timer runs only while you face the screen.">
+  <meta name="theme-color" content="#7c3aed">
+
+  <title>AI Spectator — Study Time Tracker</title>
+
+  <!-- ====== PWA ====== -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <!-- ====== Styles ====== -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ============================================
+       PRIVACY MODAL — shown once on first visit
+       ============================================ -->
+  <div id="privacy-modal" class="modal-overlay">
+    <div class="modal" role="dialog" aria-labelledby="privacy-title">
+      <div class="modal-icon">🔒</div>
+      <h2 id="privacy-title" class="modal-title">Your privacy matters</h2>
+      <div class="modal-text">
+        <p>AI Spectator uses your webcam to detect if you're facing the screen. Here's what you should know:</p>
+        <ul>
+          <li>Video is <strong>never recorded, saved, or sent anywhere</strong></li>
+          <li>Frames are analysed live in your browser, then thrown away</li>
+          <li>Only small numbers (timestamps, durations) are stored locally</li>
+          <li>Everything stays on <strong>your device</strong> — no accounts, no servers</li>
+          <li>Camera preview is off by default</li>
+        </ul>
+      </div>
+      <div class="modal-actions">
+        <button id="privacy-accept-btn" class="btn btn-primary">Got it, let's go!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       CALIBRATION OVERLAY — 5-second neutral pose
+       ============================================ -->
+  <div id="calibration-overlay" class="calibration-overlay">
+    <div class="calibration-card">
+      <div class="calibration-icon">🎯</div>
+      <h2 class="calibration-title">Quick Calibration</h2>
+      <p class="calibration-text">
+        Look at your screen normally. This takes 5 seconds to learn your natural head angle.
+      </p>
+      <div class="calibration-progress">
+        <div id="calibration-progress-bar" class="calibration-progress-bar"></div>
+      </div>
+      <div id="calibration-countdown" class="calibration-countdown">5s remaining</div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       MAIN APP
+       ============================================ -->
+  <div id="app">
+
+    <!-- ====== Header ====== -->
+    <header class="app-header">
+      <div class="logo">
+        <img src="icons/icon-192.png" alt="AI Spectator" class="logo-icon">
+        <span class="logo-text">AI Spectator</span>
+      </div>
+
+      <div class="header-controls">
+        <!-- Camera on indicator -->
+        <div id="camera-indicator" class="camera-indicator">
+          <span class="camera-dot"></span>
+          Camera On
+        </div>
+
+        <!-- Picture-in-Picture button -->
+        <button id="pip-btn" class="header-btn pip-btn" title="Mini window (Picture-in-Picture)" aria-label="Open mini window">
+          ⧉
+        </button>
+
+        <!-- Theme toggle -->
+        <button id="theme-toggle" class="header-btn" title="Toggle theme" aria-label="Toggle light/dark theme">
+          🌙
+        </button>
+
+        <!-- Settings -->
+        <button id="settings-btn" class="header-btn" title="Settings" aria-label="Open settings">
+          ⚙️
+        </button>
+      </div>
+    </header>
+
+    <!-- ====== Main Content ====== -->
+    <main class="app-main">
+
+      <!-- Install prompt (shown when available) -->
+      <div id="install-prompt" class="install-prompt">
+        <span>📲</span>
+        <span class="install-prompt-text">
+          <strong>Install AI Spectator</strong> as a desktop app for the best experience.
+        </span>
+        <button id="install-btn" class="btn btn-primary btn-sm">Install</button>
+        <button id="install-dismiss-btn" class="btn btn-ghost btn-sm">Later</button>
+      </div>
+
+      <!-- Tab bar -->
+      <nav class="tab-bar" aria-label="Main navigation">
+        <button id="tab-timer" class="tab-btn active" data-tab="timer" aria-selected="true">⏱ Timer</button>
+        <button id="tab-dashboard" class="tab-btn" data-tab="dashboard" aria-selected="false">📊 Dashboard</button>
+      </nav>
+
+      <!-- ============ TIMER VIEW ============ -->
+      <section id="timer-view" class="timer-view" aria-label="Study timer">
+
+        <!-- Status chip -->
+        <div id="status-chip" class="status-chip" data-status="idle">
+          <span class="status-dot"></span>
+          <span id="status-text">Ready to study</span>
+        </div>
+
+        <!-- Big timer display -->
+        <div id="timer-display" class="timer-display" aria-live="polite">
+          00:00:00
+        </div>
+
+        <!-- Session quick stats -->
+        <div id="session-stats" class="session-stats">
+          <div class="stat-mini">
+            <span id="stat-focus" class="stat-mini-value">100%</span>
+            <span class="stat-mini-label">Focus</span>
+          </div>
+          <div class="stat-mini">
+            <span id="stat-distractions" class="stat-mini-value">0</span>
+            <span class="stat-mini-label">Distractions</span>
+          </div>
+          <div class="stat-mini">
+            <span id="stat-session-time" class="stat-mini-value">0m</span>
+            <span class="stat-mini-label">Session</span>
+          </div>
+        </div>
+
+        <!-- Timer controls -->
+        <div class="timer-controls">
+          <button id="start-btn" class="btn btn-primary btn-lg">
+            <span class="btn-icon">▶</span> Start Studying
+          </button>
+          <button id="end-btn" class="btn btn-danger btn-lg hidden">
+            <span class="btn-icon">■</span> End Session
+          </button>
+        </div>
+
+        <!-- Camera preview (hidden by default) -->
+        <div id="camera-preview-container" class="camera-preview-container">
+          <video id="camera-preview" autoplay playsinline muted></video>
+          <span class="camera-preview-label">Preview • not recorded</span>
+        </div>
+
+        <!-- Alert display area -->
+        <div class="alert-display">
+          <div id="alert-card" class="alert-card">
+            <span id="alert-icon" class="alert-icon"></span>
+            <span id="alert-text" class="alert-text"></span>
+          </div>
+        </div>
+
+        <!-- ============ LIVE STATUS PANEL ============ -->
+        <div id="live-panel" class="card" style="margin-top: 2rem; border-color: var(--primary-color);">
+          <div class="card-header">
+            <span class="card-title">Live Status Panel</span>
+          </div>
+          <div style="padding: 1rem;">
+            <!-- Big Status Chip -->
+            <div id="live-status-chip" class="status-chip" data-status="idle" style="font-size: 1.2rem; padding: 12px 24px; margin-bottom: 1rem;">
+              <span class="status-dot"></span>
+              <span id="live-status-text">Idle</span>
+            </div>
+
+            <!-- Pipeline Checklist -->
+            <div class="settings-section-title">Pipeline</div>
+            <ul id="live-pipeline" style="list-style: none; padding: 0; margin: 0 0 1rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+              <li id="pipe-cam">❌ Camera</li>
+              <li id="pipe-model">❌ Model Loaded</li>
+              <li id="pipe-face">❌ Face Detected</li>
+              <li id="pipe-worker">❌ Heartbeat</li>
+            </ul>
+
+            <!-- Live Numbers -->
+            <div class="settings-section-title">Metrics</div>
+            <div id="live-metrics" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-family: monospace; font-size: 0.9rem; margin-bottom: 1rem; color: var(--text-secondary);">
+              <div>Yaw: <span id="live-yaw">0</span>°</div>
+              <div>Pitch: <span id="live-pitch">0</span>°</div>
+              <div>Detect FPS: <span id="live-fps">0</span></div>
+              <div>Since face: <span id="live-since-face">0</span>s</div>
+              <div>Session: <span id="live-session">0</span>s</div>
+              <div>Study: <span id="live-study">0</span>s</div>
+              <div>Pauses: <span id="live-pauses">0</span></div>
+            </div>
+
+            <!-- Camera Preview & Canvas Overlay -->
+            <div style="margin-bottom: 1rem;">
+              <label class="toggle">
+                <input id="live-preview-cb" type="checkbox">
+                <span class="toggle-slider"></span>
+                <span style="margin-left: 8px;">Show Camera with Face Box</span>
+              </label>
+              <div id="live-camera-wrapper" style="display: none; position: relative; margin-top: 1rem; width: 100%; max-width: 400px; border-radius: 8px; overflow: hidden; background: #000;">
+                <video id="live-video" autoplay playsinline muted style="width: 100%; display: block;"></video>
+                <canvas id="live-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></canvas>
+              </div>
+            </div>
+
+            <!-- Error Banner -->
+            <div id="live-error-banner" class="alert-card hidden" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); margin-bottom: 1rem;">
+              <span class="alert-icon">❌</span>
+              <span id="live-error-text" class="alert-text">Error goes here</span>
+            </div>
+
+            <!-- Event Log -->
+            <div class="settings-section-title">Event Log</div>
+            <ul id="live-events" style="list-style: none; padding: 0; margin: 0; font-family: monospace; font-size: 0.85rem; max-height: 150px; overflow-y: auto; color: var(--text-secondary);">
+            </ul>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============ DASHBOARD VIEW ============ -->
+      <section id="dashboard-view" class="dashboard-view hidden" aria-label="Study dashboard">
+
+        <!-- Today's stats -->
+        <div class="stats-row">
+          <div class="card stat-card">
+            <div id="dash-study-time" class="stat-value accent">0h 0m</div>
+            <div class="stat-label">Study Time</div>
+          </div>
+          <div class="card stat-card">
+            <div id="dash-focus" class="stat-value success">—</div>
+            <div class="stat-label">Focus</div>
+          </div>
+          <div class="card stat-card">
+            <div id="dash-distractions" class="stat-value warning">0</div>
+            <div class="stat-label">Distractions</div>
+          </div>
+        </div>
+
+        <!-- Distraction breakdown -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Distraction Breakdown</span>
+          </div>
+          <div id="distraction-breakdown" class="distraction-breakdown">
+            <div class="distraction-item">
+              <span class="distraction-dot look-away"></span>
+              <span>Look away: <strong id="dist-look-away">0</strong></span>
+            </div>
+            <div class="distraction-item">
+              <span class="distraction-dot away"></span>
+              <span>Away: <strong id="dist-away">0</strong></span>
+            </div>
+            <div class="distraction-item">
+              <span class="distraction-dot lid-closed"></span>
+              <span>Lid closed: <strong id="dist-lid">0</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7-Day Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Last 7 Days</span>
+            <span id="weekly-total" class="chart-meta-value">0h total</span>
+          </div>
+          <div id="chart-container" class="chart-container">
+            <!-- Bars generated by JS -->
+          </div>
+          <div class="chart-meta">
+            <div class="chart-meta-item">
+              Goal: <span id="daily-goal-display" class="chart-meta-value">4h</span>
+            </div>
+            <div id="streak-badge" class="streak-badge">
+              🔥 0 day streak
+            </div>
+          </div>
+        </div>
+
+        <!-- Session list -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Sessions</span>
+          </div>
+          <div id="session-list" class="session-list">
+            <div class="empty-state">
+              <div class="empty-state-icon">📚</div>
+              <div class="empty-state-text">No sessions yet. Start studying to see your progress!</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Data actions -->
+        <div class="data-actions">
+          <button id="export-csv-btn" class="btn btn-secondary btn-sm">
+            📁 Export CSV
+          </button>
+          <button id="delete-all-btn" class="btn btn-ghost btn-sm" style="color: var(--danger);">
+            🗑 Delete All Data
+          </button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ============================================
+       SETTINGS PANEL — slides in from right
+       ============================================ -->
+  <div id="settings-overlay" class="settings-overlay"></div>
+  <aside id="settings-panel" class="settings-panel" role="dialog" aria-label="Settings">
+    <div class="settings-header">
+      <h2 class="settings-title">Settings</h2>
+      <button id="settings-close-btn" class="settings-close" aria-label="Close settings">✕</button>
+    </div>
+    <div class="settings-body">
+
+      <!-- Detection settings -->
+      <div class="settings-section">
+        <div class="settings-section-title">Detection</div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Sensitivity</div>
+            <div class="setting-description">How much head movement triggers a pause</div>
+          </div>
+          <div class="select-wrap">
+            <select id="setting-sensitivity" class="select">
+              <option value="low">Low (35°)</option>
+              <option value="medium" selected>Medium (25°)</option>
+              <option value="high">High (15°)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Look-away time</div>
+            <div class="setting-description">Seconds before "looking away" pauses timer</div>
+          </div>
+          <input id="setting-lookaway-time" class="input-number" type="number" min="3" max="60" value="10">
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Away time</div>
+            <div class="setting-description">Seconds with no face before "away" pauses timer</div>
+          </div>
+          <input id="setting-away-time" class="input-number" type="number" min="10" max="120" value="30">
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Reading notes mode</div>
+            <div class="setting-description">Ignores looking down (for reading on the desk)</div>
+          </div>
+          <label class="toggle">
+            <input id="setting-reading-mode" type="checkbox">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Goal settings -->
+      <div class="settings-section">
+        <div class="settings-section-title">Goal</div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Daily goal (hours)</div>
+          </div>
+          <input id="setting-daily-goal" class="input-number" type="number" min="0.5" max="16" step="0.5" value="4">
+        </div>
+      </div>
+
+      <!-- Notification settings -->
+      <div class="settings-section">
+        <div class="settings-section-title">Notifications</div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Sound</div>
+          </div>
+          <label class="toggle">
+            <input id="setting-sound" type="checkbox" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Volume</div>
+          </div>
+          <input id="setting-volume" class="range" type="range" min="0" max="100" value="50">
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Desktop notifications</div>
+          </div>
+          <label class="toggle">
+            <input id="setting-notifications" type="checkbox" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Camera settings -->
+      <div class="settings-section">
+        <div class="settings-section-title">Camera</div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Camera preview</div>
+            <div class="setting-description">Show live camera feed (never recorded)</div>
+          </div>
+          <label class="toggle">
+            <input id="setting-camera-preview" type="checkbox">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ====== Toast container ====== -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- ====== Scripts ====== -->
+  <script src="app.js"></script>
+
+</body>
+</html>
