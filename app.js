@@ -188,7 +188,7 @@ const state = {
   // Settings (loaded from localStorage)
   settings: {
     sensitivity: 'medium',     // 'low' | 'medium' | 'high'
-    focusThreshold: 95,        // percentage (50-99): timer stops immediately if focus < focusThreshold
+    focusThreshold: 80,        // percentage (50-99): timer stops immediately if focus < focusThreshold
     lookawayTime: 10,          // seconds
     awayTime: 30,              // seconds
     readingMode: false,
@@ -299,14 +299,17 @@ function loadSettings() {
   }
 
   // Apply to UI controls
+  if (state.settings.focusThreshold === undefined || state.settings.focusThreshold === 95) {
+    state.settings.focusThreshold = 80;
+  }
   if (DOM.settingFocusThreshold) {
-    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 95;
+    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 80;
     if (DOM.settingFocusThresholdVal) {
-      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 95) + '%';
+      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 80) + '%';
     }
   }
   if (DOM.liveFocusThresholdTag) {
-    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 95)}%`;
+    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 80)}%`;
   }
   DOM.settingSensitivity.value   = state.settings.sensitivity;
   DOM.settingLookawayTime.value  = state.settings.lookawayTime;
@@ -331,7 +334,7 @@ function initSettingsListeners() {
   if (DOM.settingFocusThreshold) {
     DOM.settingFocusThreshold.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
-      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 95));
+      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 80));
       if (DOM.settingFocusThresholdVal) {
         DOM.settingFocusThresholdVal.textContent = state.settings.focusThreshold + '%';
       }
@@ -1300,11 +1303,14 @@ function runDetection() {
 
     // Calculate focus score and screen facing state
     const focusScore = calculateFocusScore(smoothed);
-    const cutoff = state.settings.focusThreshold || 95;
+    const cutoff = state.settings.focusThreshold || 80;
     const isFacingScreen = focusScore >= cutoff;
 
     // ── Update the Focus gauge and head-position dot ──
     updateFocusIndicator(smoothed, focusScore);
+
+    // Update Picture-in-Picture window in real time
+    updatePiP(focusScore);
 
     // Update pipeline indicator for screen focus with live percentage
     if (DOM.pipeFocus) {
@@ -1328,6 +1334,7 @@ function runDetection() {
 
     // No face — reset focus indicators
     updateFocusIndicator(null, 0);
+    updatePiP(0);
     if (DOM.pipeFocus) {
       DOM.pipeFocus.textContent = '❌ Facing Screen (No Face)';
       DOM.pipeFocus.classList.remove('pipe-ok', 'pipe-warn');
@@ -1367,7 +1374,7 @@ function calculateFocusScore(pose) {
   const deviation = Math.hypot(yawDev, pitchDev * 0.85);
   const x = Math.min(1.0, deviation / threshold);
 
-  // Power curve: stays >= 95% in center cone (0°–3.5°), drops sharply once turned away
+  // Power curve: stays >= 80% in comfortable screen cone, drops sharply once turned away
   const score = Math.max(0, Math.min(100, Math.round(100 * (1 - Math.pow(x, 1.5)))));
   return score;
 }
@@ -1380,7 +1387,7 @@ function calculateFocusScore(pose) {
  */
 function isUserFacingScreen(pose) {
   const score = calculateFocusScore(pose);
-  const cutoff = state.settings.focusThreshold || 95;
+  const cutoff = state.settings.focusThreshold || 80;
   return score >= cutoff;
 }
 
@@ -1396,7 +1403,7 @@ function updateFocusIndicator(pose, focusScore) {
   const threshold = SENSITIVITY[state.settings.sensitivity] || 25;
   const neutralYaw = state.calibration.neutralYaw || 0;
   const neutralPitch = state.calibration.neutralPitch || 0;
-  const cutoff = state.settings.focusThreshold || 95;
+  const cutoff = state.settings.focusThreshold || 80;
   const CIRCUMFERENCE = 314.16; // 2π × 50
 
   if (!pose) {
@@ -1460,7 +1467,7 @@ function updateFocusIndicator(pose, focusScore) {
 function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
   const now = Date.now();
   const hp = state.headPose;
-  const cutoff = state.settings.focusThreshold || 95;
+  const cutoff = state.settings.focusThreshold || 80;
   const isFocused = faceDetected && (focusScore >= cutoff);
 
   // ── STUDYING ──
@@ -1475,7 +1482,7 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
     }
 
     if (faceDetected && !isFocused) {
-      // Face visible but focus dropped below cutoff (< 95%) — SUDDEN STOP!
+      // Face visible but focus dropped below cutoff (< 80%) — SUDDEN STOP!
       hp.facingScreenSince = 0;
       hp.lookAwayStart = now;
 
@@ -2273,10 +2280,10 @@ async function togglePiP() {
   try {
     state.pipWindow = await documentPictureInPicture.requestWindow({
       width: 320,
-      height: 180,
+      height: 190,
     });
     
-    // Copy stylesheets
+    // Copy parent document stylesheets into the PiP window
     [...document.styleSheets].forEach((styleSheet) => {
       try {
         const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
@@ -2293,14 +2300,124 @@ async function togglePiP() {
       }
     });
 
+    // Injected dedicated inline styles for bulletproof PiP color transitions & animations
+    const customStyle = document.createElement('style');
+    customStyle.textContent = `
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        margin: 0; padding: 0; overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        background: #090d16; color: #f1f5f9; user-select: none; height: 100vh;
+      }
+      .pip-root {
+        display: flex; flex-direction: column; justify-content: space-between; align-items: center;
+        height: 100vh; padding: 12px 16px; position: relative;
+        transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        border: 3px solid transparent; box-sizing: border-box; overflow: hidden;
+      }
+      .pip-root[data-status="studying"] {
+        background: radial-gradient(circle at center, #0d281e 0%, #061114 100%);
+        border-color: #10b981;
+        box-shadow: inset 0 0 25px rgba(16, 185, 129, 0.25), 0 0 15px rgba(16, 185, 129, 0.3);
+      }
+      .pip-root[data-status="studying"] .pip-timer {
+        color: #10b981; text-shadow: 0 0 28px rgba(16, 185, 129, 0.6);
+      }
+      .pip-root[data-status="studying"] .pip-badge {
+        background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5);
+      }
+      .pip-root[data-status="studying"] .pip-badge-dot {
+        background: #10b981; box-shadow: 0 0 8px #10b981;
+      }
+      .pip-root[data-status="looking-away"] {
+        background: radial-gradient(circle at center, #36140b 0%, #170705 100%);
+        border-color: #f59e0b;
+        box-shadow: inset 0 0 35px rgba(245, 158, 11, 0.45), 0 0 25px rgba(245, 158, 11, 0.5);
+        animation: pip-alert-amber 0.9s ease-in-out infinite alternate;
+      }
+      .pip-root[data-status="looking-away"] .pip-timer {
+        color: #f59e0b; text-shadow: 0 0 28px rgba(245, 158, 11, 0.8);
+      }
+      .pip-root[data-status="looking-away"] .pip-badge {
+        background: #f59e0b; color: #000000; font-weight: 700; border: 1px solid #fbbf24;
+      }
+      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #000000; }
+      .pip-root[data-status="looking-away"] .pip-alert-banner {
+        display: flex !important; background: rgba(245, 158, 11, 0.25); color: #fbbf24; border-color: rgba(245, 158, 11, 0.5);
+      }
+      .pip-root[data-status="away"], .pip-root[data-status="lid-closed"] {
+        background: radial-gradient(circle at center, #380812 0%, #190308 100%);
+        border-color: #ef4444;
+        box-shadow: inset 0 0 45px rgba(239, 68, 68, 0.55), 0 0 30px rgba(239, 68, 68, 0.65);
+        animation: pip-alert-red 0.8s ease-in-out infinite alternate;
+      }
+      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer {
+        color: #ef4444; text-shadow: 0 0 28px rgba(239, 68, 68, 0.9);
+      }
+      .pip-root[data-status="away"] .pip-badge, .pip-root[data-status="lid-closed"] .pip-badge {
+        background: #ef4444; color: #ffffff; font-weight: 700; border: 1px solid #f87171;
+      }
+      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot {
+        background: #ffffff; box-shadow: 0 0 8px #ffffff;
+      }
+      .pip-root[data-status="away"] .pip-alert-banner, .pip-root[data-status="lid-closed"] .pip-alert-banner {
+        display: flex !important; background: rgba(239, 68, 68, 0.3); color: #fca5a5; border-color: rgba(239, 68, 68, 0.6);
+      }
+      .pip-root[data-status="idle"], .pip-root[data-status="calibrating"] {
+        background: #0f172a; border-color: #334155;
+      }
+      .pip-root[data-status="idle"] .pip-timer { color: #94a3b8; }
+      .pip-root[data-status="idle"] .pip-badge {
+        background: #1e293b; color: #94a3b8; border: 1px solid #334155;
+      }
+      .pip-header { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+      .pip-badge {
+        display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px;
+        font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.25s ease;
+      }
+      .pip-badge-dot { width: 7px; height: 7px; border-radius: 50%; }
+      .pip-focus-tag {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.72rem; color: #94a3b8; font-weight: 600;
+      }
+      .pip-timer {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 3.2rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1; margin: 4px 0;
+        transition: color 0.25s ease, text-shadow 0.25s ease;
+      }
+      .pip-alert-banner {
+        width: 100%; display: none; align-items: center; justify-content: center; gap: 6px;
+        padding: 4px 8px; border-radius: 6px; font-size: 0.74rem; font-weight: 700;
+        letter-spacing: 0.04em; border: 1px solid transparent;
+      }
+      @keyframes pip-alert-amber {
+        0% { border-color: #f59e0b; box-shadow: inset 0 0 25px rgba(245, 158, 11, 0.3), 0 0 15px rgba(245, 158, 11, 0.4); }
+        100% { border-color: #fbbf24; box-shadow: inset 0 0 50px rgba(245, 158, 11, 0.65), 0 0 35px rgba(245, 158, 11, 0.8); }
+      }
+      @keyframes pip-alert-red {
+        0% { border-color: #ef4444; box-shadow: inset 0 0 30px rgba(239, 68, 68, 0.35), 0 0 20px rgba(239, 68, 68, 0.45); }
+        100% { border-color: #ff3333; box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.8), 0 0 45px rgba(239, 68, 68, 0.95); }
+      }
+    `;
+    state.pipWindow.document.head.appendChild(customStyle);
+
     state.pipWindow.document.body.innerHTML = `
-      <div style="padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-sans);">
-        <div id="pip-status-chip" class="status-chip" data-status="${state.status}">
-          <span class="status-dot"></span>
-          <span id="pip-status-text">${DOM.statusText.textContent}</span>
+      <div id="pip-container" class="pip-root" data-status="${state.status}">
+        <div class="pip-header">
+          <div id="pip-status-chip" class="pip-badge" data-status="${state.status}">
+            <span class="pip-badge-dot"></span>
+            <span id="pip-status-text">${DOM.statusText.textContent}</span>
+          </div>
+          <div id="pip-focus-tag" class="pip-focus-tag">Focus: 100%</div>
         </div>
-        <div id="pip-timer" class="${DOM.timerDisplay.className}" style="font-size: 3rem; padding: 16px 0;">
+
+        <div id="pip-timer" class="pip-timer" data-status="${state.status}">
           ${DOM.timerDisplay.textContent}
+        </div>
+
+        <div id="pip-alert-banner" class="pip-alert-banner">
+          <span id="pip-alert-icon">⚠️</span>
+          <span id="pip-alert-text">TIMER PAUSED — LOOKING AWAY</span>
         </div>
       </div>
     `;
@@ -2311,24 +2428,78 @@ async function togglePiP() {
       state.pipWindow = null;
     });
 
+    updatePiP();
+
   } catch (err) {
     console.error('Failed to enter PiP:', err);
     showToast('error', 'PiP Failed', 'Could not open mini window.');
   }
 }
 
-function updatePiP() {
+/**
+ * Update the floating Picture-in-Picture window with high-contrast status colors and alert banners.
+ *
+ * @param {number} [focusScore] — live focus percentage (0-100)
+ */
+function updatePiP(focusScore) {
   if (!state.pipWindow) return;
+  const container = state.pipWindow.document.getElementById('pip-container');
   const timerEl = state.pipWindow.document.getElementById('pip-timer');
   const chipEl = state.pipWindow.document.getElementById('pip-status-chip');
   const textEl = state.pipWindow.document.getElementById('pip-status-text');
+  const alertEl = state.pipWindow.document.getElementById('pip-alert-banner');
+  const alertTextEl = state.pipWindow.document.getElementById('pip-alert-text');
+  const alertIconEl = state.pipWindow.document.getElementById('pip-alert-icon');
+  const focusTagEl = state.pipWindow.document.getElementById('pip-focus-tag');
   
+  const cutoff = state.settings.focusThreshold ?? 80;
+  const score = typeof focusScore === 'number'
+    ? focusScore
+    : (state.headPose.faceDetected ? calculateFocusScore(state.headPose) : 0);
+
+  if (container) container.setAttribute('data-status', state.status);
+  if (chipEl) chipEl.setAttribute('data-status', state.status);
+
   if (timerEl) {
     timerEl.textContent = DOM.timerDisplay.textContent;
-    timerEl.className = DOM.timerDisplay.className;
+    timerEl.setAttribute('data-status', state.status);
   }
-  if (chipEl) chipEl.setAttribute('data-status', state.status);
-  if (textEl) textEl.textContent = DOM.statusText.textContent;
+
+  if (textEl) {
+    if (state.status === 'studying') textEl.textContent = 'Studying';
+    else if (state.status === 'looking-away') textEl.textContent = 'Paused — Looking Away';
+    else if (state.status === 'away') textEl.textContent = 'Paused — No Face';
+    else if (state.status === 'lid-closed') textEl.textContent = 'Paused — Sleeping';
+    else textEl.textContent = DOM.statusText.textContent || 'Idle';
+  }
+
+  if (focusTagEl) {
+    if (state.headPose.faceDetected) {
+      focusTagEl.textContent = `Focus: ${score}%`;
+      focusTagEl.style.color = score >= cutoff ? '#34d399' : '#f87171';
+    } else {
+      focusTagEl.textContent = 'No Face';
+      focusTagEl.style.color = '#f87171';
+    }
+  }
+
+  if (alertEl && alertTextEl) {
+    if (state.status === 'looking-away') {
+      alertEl.style.display = 'flex';
+      if (alertIconEl) alertIconEl.textContent = '👀';
+      alertTextEl.textContent = `PAUSED: FOCUS ${score}% < ${cutoff}%`;
+    } else if (state.status === 'away') {
+      alertEl.style.display = 'flex';
+      if (alertIconEl) alertIconEl.textContent = '❌';
+      alertTextEl.textContent = 'PAUSED: NO FACE DETECTED';
+    } else if (state.status === 'lid-closed') {
+      alertEl.style.display = 'flex';
+      if (alertIconEl) alertIconEl.textContent = '💤';
+      alertTextEl.textContent = 'PAUSED: LAPTOP ASLEEP';
+    } else {
+      alertEl.style.display = 'none';
+    }
+  }
 }
 
 

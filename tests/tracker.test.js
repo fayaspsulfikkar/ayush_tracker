@@ -124,14 +124,15 @@ describe('Ayush_Tracker — Focus Measurement & Sudden Stopping', () => {
     assert.equal(score, 100);
   });
 
-  test('calculateFocusScore stays >= 95% for normal micro-movements (1°-2°)', () => {
-    const score = calculateFocusScore({ yaw: 1.5, pitch: 1.5 }, { yaw: 0, pitch: 0 }, 25);
-    assert.ok(score >= 95, `Expected score >= 95, got ${score}`);
+  test('calculateFocusScore stays well above 80% for normal screen movements (preventing accidental pauses)', () => {
+    // Normal head shifts and screen scanning (up to 4°-5°)
+    const score = calculateFocusScore({ yaw: 3.5, pitch: 2 }, { yaw: 0, pitch: 0 }, 25);
+    assert.ok(score >= 80, `Expected score >= 80% to prevent accidental pause, got ${score}%`);
   });
 
-  test('calculateFocusScore drops below 95% when looking away (> 5°)', () => {
-    const score = calculateFocusScore({ yaw: 6, pitch: 3 }, { yaw: 0, pitch: 0 }, 25);
-    assert.ok(score < 95, `Expected score < 95, got ${score}`);
+  test('calculateFocusScore drops below 80% default cutoff when looking away (> 8°)', () => {
+    const score = calculateFocusScore({ yaw: 9, pitch: 4 }, { yaw: 0, pitch: 0 }, 25);
+    assert.ok(score < 80, `Expected score < 80%, got ${score}%`);
   });
 
   test('reading mode ignores downward pitch in focus score', () => {
@@ -141,9 +142,9 @@ describe('Ayush_Tracker — Focus Measurement & Sudden Stopping', () => {
     assert.equal(readingScore, 100);
   });
 
-  test('timer triggers sudden pause immediately if focus < cutoff threshold (95%)', () => {
-    const cutoff = 95;
-    const focusScore = calculateFocusScore({ yaw: 8, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
+  test('timer triggers sudden pause immediately if focus < cutoff threshold (80%)', () => {
+    const cutoff = 80;
+    const focusScore = calculateFocusScore({ yaw: 10, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
     const shouldStopImmediately = focusScore < cutoff;
     assert.equal(shouldStopImmediately, true);
   });
