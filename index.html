@@ -177,22 +177,57 @@
                   <li id="pipe-cam" class="pipe-item">❌ Camera</li>
                   <li id="pipe-model" class="pipe-item">❌ Model Loaded</li>
                   <li id="pipe-face" class="pipe-item">❌ Face Detected</li>
+                  <li id="pipe-focus" class="pipe-item">❌ Facing Screen</li>
                   <li id="pipe-worker" class="pipe-item">❌ Heartbeat</li>
                 </ul>
+              </div>
+
+              <!-- Head Focus Indicator -->
+              <div class="live-section">
+                <div class="live-section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Screen Focus</span>
+                  <span id="live-focus-threshold-tag" style="font-size: 0.7rem; font-family: var(--font-mono); font-weight: 500; color: var(--text-muted);">Cutoff: 95%</span>
+                </div>
+                <div class="focus-indicator-wrap">
+                  <!-- Radial gauge -->
+                  <div class="focus-gauge" id="focus-gauge-container">
+                    <svg viewBox="0 0 120 120" class="focus-gauge-svg" aria-hidden="true">
+                      <!-- Background arc -->
+                      <circle cx="60" cy="60" r="50" fill="none" stroke="var(--bg-input)" stroke-width="10"/>
+                      <!-- Progress arc (updated by JS) -->
+                      <circle id="focus-arc" cx="60" cy="60" r="50" fill="none"
+                        stroke="var(--accent)"
+                        stroke-width="10"
+                        stroke-linecap="round"
+                        stroke-dasharray="314.16"
+                        stroke-dashoffset="314.16"
+                        transform="rotate(-90 60 60)"/>
+                    </svg>
+                    <div class="focus-gauge-center">
+                      <span id="focus-pct-val">0%</span>
+                      <span class="focus-gauge-label">focus</span>
+                    </div>
+                  </div>
+
+                  <!-- Directional dot-grid (crosshair) -->
+                  <div class="head-pos-grid" title="Head position relative to screen center">
+                    <div class="head-pos-grid-bg">
+                      <div class="head-pos-h-line"></div>
+                      <div class="head-pos-v-line"></div>
+                      <div id="head-pos-dot" class="head-pos-dot"></div>
+                    </div>
+                    <div class="head-pos-labels">
+                      <span>Yaw <strong id="live-yaw">0</strong>°</span>
+                      <span>Pitch <strong id="live-pitch">0</strong>°</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <!-- Live numbers -->
               <div class="live-section">
                 <div class="live-section-title">Metrics</div>
                 <div id="live-metrics" class="metrics-grid">
-                  <div class="metric-box">
-                    <span class="metric-name">Yaw</span>
-                    <span class="metric-val"><strong id="live-yaw">0</strong>°</span>
-                  </div>
-                  <div class="metric-box">
-                    <span class="metric-name">Pitch</span>
-                    <span class="metric-val"><strong id="live-pitch">0</strong>°</span>
-                  </div>
                   <div class="metric-box">
                     <span class="metric-name">FPS</span>
                     <span class="metric-val"><strong id="live-fps">0</strong></span>
@@ -386,8 +421,19 @@
 
         <div class="setting-row">
           <div>
-            <div class="setting-label">Sensitivity</div>
-            <div class="setting-description">How much head movement triggers a pause</div>
+            <div class="setting-label">Face Focus Threshold</div>
+            <div class="setting-description">Timer stops immediately if focus falls below this percentage</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input id="setting-focus-threshold" class="range" type="range" min="50" max="99" value="95" style="width: 100px;">
+            <span id="setting-focus-threshold-val" style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; min-width: 38px; color: var(--accent);">95%</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Angle Sensitivity</div>
+            <div class="setting-description">Head angle tolerance cone (Low = 35°, Medium = 25°, High = 15°)</div>
           </div>
           <div class="select-wrap">
             <select id="setting-sensitivity" class="select">
@@ -400,10 +446,18 @@
 
         <div class="setting-row">
           <div>
-            <div class="setting-label">Look-away time</div>
-            <div class="setting-description">Seconds before "looking away" pauses timer</div>
+            <div class="setting-label">Neutral Pose Calibration</div>
+            <div class="setting-description">Recalibrate your neutral center angle anytime</div>
           </div>
-          <input id="setting-lookaway-time" class="input-number" type="number" min="3" max="60" value="10">
+          <button id="recalibrate-btn" class="btn btn-secondary btn-sm" type="button" style="white-space: nowrap;">🎯 Recalibrate</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Look-away time</div>
+            <div class="setting-description">Max seconds allowed away before distraction count increments</div>
+          </div>
+          <input id="setting-lookaway-time" class="input-number" type="number" min="1" max="60" value="10">
         </div>
 
         <div class="setting-row">
@@ -411,7 +465,7 @@
             <div class="setting-label">Away time</div>
             <div class="setting-description">Seconds with no face before "away" pauses timer</div>
           </div>
-          <input id="setting-away-time" class="input-number" type="number" min="10" max="120" value="30">
+          <input id="setting-away-time" class="input-number" type="number" min="5" max="120" value="30">
         </div>
 
         <div class="setting-row">

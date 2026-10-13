@@ -60,6 +60,18 @@ function calculateBackdatedStudyTime(recordedStudyTime, pauseDelayMs) {
   return Math.max(0, recordedStudyTime - pauseDelayMs);
 }
 
+function calculateFocusScore(pose, neutral = { yaw: 0, pitch: 0 }, threshold = 25, readingMode = false) {
+  if (!pose) return 0;
+  const yawDev = Math.abs(pose.yaw - neutral.yaw);
+  let pitchDev = Math.abs(pose.pitch - neutral.pitch);
+  if (readingMode && pose.pitch > neutral.pitch) {
+    pitchDev = 0;
+  }
+  const deviation = Math.hypot(yawDev, pitchDev * 0.85);
+  const x = Math.min(1.0, deviation / threshold);
+  return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.pow(x, 1.5)))));
+}
+
 // ── Test Suites ──
 
 describe('Ayush_Tracker — Core Formatting', () => {
@@ -103,6 +115,37 @@ describe('Ayush_Tracker — Head Pose & Geometry', () => {
     assert.equal(isFacingScreen({ yaw: 5, pitch: 8 }, neutral, threshold), true);
     assert.equal(isFacingScreen({ yaw: 25, pitch: 5 }, neutral, threshold), false);
     assert.equal(isFacingScreen({ yaw: 0, pitch: -22 }, neutral, threshold), false);
+  });
+});
+
+describe('Ayush_Tracker — Focus Measurement & Sudden Stopping', () => {
+  test('calculateFocusScore returns 100% when perfectly centered', () => {
+    const score = calculateFocusScore({ yaw: 0, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
+    assert.equal(score, 100);
+  });
+
+  test('calculateFocusScore stays >= 95% for normal micro-movements (1°-2°)', () => {
+    const score = calculateFocusScore({ yaw: 1.5, pitch: 1.5 }, { yaw: 0, pitch: 0 }, 25);
+    assert.ok(score >= 95, `Expected score >= 95, got ${score}`);
+  });
+
+  test('calculateFocusScore drops below 95% when looking away (> 5°)', () => {
+    const score = calculateFocusScore({ yaw: 6, pitch: 3 }, { yaw: 0, pitch: 0 }, 25);
+    assert.ok(score < 95, `Expected score < 95, got ${score}`);
+  });
+
+  test('reading mode ignores downward pitch in focus score', () => {
+    const normalScore = calculateFocusScore({ yaw: 0, pitch: 15 }, { yaw: 0, pitch: 0 }, 25, false);
+    const readingScore = calculateFocusScore({ yaw: 0, pitch: 15 }, { yaw: 0, pitch: 0 }, 25, true);
+    assert.ok(readingScore > normalScore);
+    assert.equal(readingScore, 100);
+  });
+
+  test('timer triggers sudden pause immediately if focus < cutoff threshold (95%)', () => {
+    const cutoff = 95;
+    const focusScore = calculateFocusScore({ yaw: 8, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
+    const shouldStopImmediately = focusScore < cutoff;
+    assert.equal(shouldStopImmediately, true);
   });
 });
 

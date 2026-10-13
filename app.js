@@ -127,6 +127,7 @@ const DOM = {
   pipeCam: document.getElementById('pipe-cam'),
   pipeModel: document.getElementById('pipe-model'),
   pipeFace: document.getElementById('pipe-face'),
+  pipeFocus: document.getElementById('pipe-focus'),
   pipeWorker: document.getElementById('pipe-worker'),
   liveYaw: document.getElementById('live-yaw'),
   livePitch: document.getElementById('live-pitch'),
@@ -142,6 +143,13 @@ const DOM = {
   liveErrorBanner: document.getElementById('live-error-banner'),
   liveErrorText: document.getElementById('live-error-text'),
   liveEvents: document.getElementById('live-events'),
+  focusArc: document.getElementById('focus-arc'),
+  focusPctVal: document.getElementById('focus-pct-val'),
+  headPosDot: document.getElementById('head-pos-dot'),
+  liveFocusThresholdTag: document.getElementById('live-focus-threshold-tag'),
+  settingFocusThreshold: document.getElementById('setting-focus-threshold'),
+  settingFocusThresholdVal: document.getElementById('setting-focus-threshold-val'),
+  recalibrateBtn:       document.getElementById('recalibrate-btn'),
   settingSensitivity:   document.getElementById('setting-sensitivity'),
   settingLookawayTime:  document.getElementById('setting-lookaway-time'),
   settingAwayTime:      document.getElementById('setting-away-time'),
@@ -180,6 +188,7 @@ const state = {
   // Settings (loaded from localStorage)
   settings: {
     sensitivity: 'medium',     // 'low' | 'medium' | 'high'
+    focusThreshold: 95,        // percentage (50-99): timer stops immediately if focus < focusThreshold
     lookawayTime: 10,          // seconds
     awayTime: 30,              // seconds
     readingMode: false,
@@ -290,6 +299,15 @@ function loadSettings() {
   }
 
   // Apply to UI controls
+  if (DOM.settingFocusThreshold) {
+    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 95;
+    if (DOM.settingFocusThresholdVal) {
+      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 95) + '%';
+    }
+  }
+  if (DOM.liveFocusThresholdTag) {
+    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 95)}%`;
+  }
   DOM.settingSensitivity.value   = state.settings.sensitivity;
   DOM.settingLookawayTime.value  = state.settings.lookawayTime;
   DOM.settingAwayTime.value      = state.settings.awayTime;
@@ -310,6 +328,33 @@ function saveSettings() {
 }
 
 function initSettingsListeners() {
+  if (DOM.settingFocusThreshold) {
+    DOM.settingFocusThreshold.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 95));
+      if (DOM.settingFocusThresholdVal) {
+        DOM.settingFocusThresholdVal.textContent = state.settings.focusThreshold + '%';
+      }
+      if (DOM.liveFocusThresholdTag) {
+        DOM.liveFocusThresholdTag.textContent = `Cutoff: ${state.settings.focusThreshold}%`;
+      }
+      saveSettings();
+    });
+  }
+
+  if (DOM.recalibrateBtn) {
+    DOM.recalibrateBtn.addEventListener('click', async () => {
+      closeSettings();
+      if (!state.camera.stream) {
+        showToast('info', 'Starting Camera', 'Camera is needed to calibrate your neutral position.');
+        const ok = await startCamera();
+        if (!ok) return;
+        startDetectionLoop();
+      }
+      await runCalibration();
+    });
+  }
+
   DOM.settingSensitivity.addEventListener('change', (e) => {
     state.settings.sensitivity = e.target.value;
     saveSettings();
@@ -935,44 +980,73 @@ async function initFaceLandmarker() {
  * @returns {{ yaw: number, pitch: number }} — angles in degrees
  */
 function calculateHeadPose(landmarks) {
+  if (!landmarks || landmarks.length < 468) {
+    return { yaw: 0, pitch: 0 };
+  }
+
   const noseTip     = landmarks[4];
-  const leftCheek   = landmarks[234];
-  const rightCheek  = landmarks[454];
+  const rightCheek  = landmarks[234]; // person's right, camera left
+  const leftCheek   = landmarks[454]; // person's left, camera right
   const foreheadTop = landmarks[10];
   const chinBottom  = landmarks[152];
+  const rightEye    = landmarks[33];
+  const leftEye     = landmarks[263];
+  const rightMouth  = landmarks[61];
+  const leftMouth   = landmarks[291];
 
-  // ── YAW (left/right) ──
-  // Distance from nose to each side of the face
-  const dLeft = Math.hypot(
-    noseTip.x - leftCheek.x,
-    noseTip.y - leftCheek.y,
-    noseTip.z - leftCheek.z
-  );
-  const dRight = Math.hypot(
-    noseTip.x - rightCheek.x,
-    noseTip.y - rightCheek.y,
-    noseTip.z - rightCheek.z
-  );
-  // Ratio: positive = turned left, negative = turned right
-  const yawRatio = (dLeft - dRight) / (dLeft + dRight);
-  // Map to degrees. The ratio tops out at about ±0.5 for a ~45° turn.
-  // So we multiply by ~90 to get approximate degrees.
-  const yaw = yawRatio * 90;
+  // Face center between outer cheek edges
+  const centerX = (rightCheek.x + leftCheek.x) / 2;
+  const centerY = (rightCheek.y + leftCheek.y) / 2;
 
-  // ── PITCH (up/down) ──
-  const dForehead = Math.hypot(
-    noseTip.x - foreheadTop.x,
-    noseTip.y - foreheadTop.y,
-    noseTip.z - foreheadTop.z
-  );
-  const dChin = Math.hypot(
-    noseTip.x - chinBottom.x,
-    noseTip.y - chinBottom.y,
-    noseTip.z - chinBottom.z
-  );
-  // Positive = looking down, negative = looking up
-  const pitchRatio = (dForehead - dChin) / (dForehead + dChin);
-  const pitch = pitchRatio * 90;
+  // Head roll angle — aligning face coordinates eliminates false yaw/pitch when tilting head
+  const dx = leftCheek.x - rightCheek.x;
+  const dy = leftCheek.y - rightCheek.y;
+  const roll = Math.atan2(dy, dx);
+  const cos = Math.cos(-roll);
+  const sin = Math.sin(-roll);
+  const faceWidth = Math.hypot(dx, dy);
+
+  if (faceWidth < 0.001) return { yaw: 0, pitch: 0 };
+
+  // Project nose tip into roll-aligned face coordinates
+  const noseRelX = noseTip.x - centerX;
+  const noseRelY = noseTip.y - centerY;
+  const noseFaceX = noseRelX * cos - noseRelY * sin;
+  const noseFaceY = noseRelX * sin + noseRelY * cos;
+
+  // ── YAW (horizontal turn) ──
+  // Ratio of nose horizontal position relative to cheek midpoint
+  const halfWidth = faceWidth * 0.5;
+  const yawRatio = Math.max(-1.0, Math.min(1.0, noseFaceX / halfWidth));
+  const yaw2D = yawRatio * 55;
+  // Z-depth difference between cheeks reinforces 3D rotation
+  const zYaw = (rightCheek.z - leftCheek.z) * 120;
+  const yaw = yaw2D * 0.75 + zYaw * 0.25;
+
+  // ── PITCH (vertical tilt) ──
+  // In neutral upright human anatomy, the nose tip lies in the vertical center between eye line and mouth line.
+  const eyeX = (rightEye.x + leftEye.x) / 2;
+  const eyeY = (rightEye.y + leftEye.y) / 2;
+  const mouthX = (rightMouth.x + leftMouth.x) / 2;
+  const mouthY = (rightMouth.y + leftMouth.y) / 2;
+
+  const eyeFaceY = (eyeX - centerX) * sin + (eyeY - centerY) * cos;
+  const mouthFaceY = (mouthX - centerX) * sin + (mouthY - centerY) * cos;
+
+  const vertCenter = (eyeFaceY + mouthFaceY) / 2;
+  const vertSpan = Math.abs(mouthFaceY - eyeFaceY) * 0.5;
+
+  let pitch2D = 0;
+  if (vertSpan > 0.001) {
+    // Positive when tilted down (nose moves towards mouth)
+    // Negative when tilted up (nose moves towards eyes)
+    const pitchRatio = Math.max(-1.0, Math.min(1.0, (noseFaceY - vertCenter) / vertSpan));
+    pitch2D = pitchRatio * 50;
+  }
+
+  // Z-depth difference between chin and forehead reinforces vertical tilt
+  const zPitch = (chinBottom.z - foreheadTop.z) * 80;
+  const pitch = pitch2D * 0.75 + zPitch * 0.25;
 
   return { yaw, pitch };
 }
@@ -1224,50 +1298,143 @@ function runDetection() {
       return;
     }
 
-    // Check if user is facing the screen
-    const isFacingScreen = isUserFacingScreen(smoothed);
+    // Calculate focus score and screen facing state
+    const focusScore = calculateFocusScore(smoothed);
+    const cutoff = state.settings.focusThreshold || 95;
+    const isFacingScreen = focusScore >= cutoff;
 
-    // Update the state machine
-    processDetectionResult(true, isFacingScreen);
+    // ── Update the Focus gauge and head-position dot ──
+    updateFocusIndicator(smoothed, focusScore);
+
+    // Update pipeline indicator for screen focus with live percentage
+    if (DOM.pipeFocus) {
+      if (isFacingScreen) {
+        DOM.pipeFocus.textContent = `✅ Facing Screen (${focusScore}%)`;
+        DOM.pipeFocus.classList.add('pipe-ok');
+        DOM.pipeFocus.classList.remove('pipe-warn');
+      } else {
+        DOM.pipeFocus.textContent = `👀 Focus Low (${focusScore}% < ${cutoff}%)`;
+        DOM.pipeFocus.classList.remove('pipe-ok');
+        DOM.pipeFocus.classList.add('pipe-warn');
+      }
+    }
+
+    // Update the state machine (stops suddenly if focusScore < cutoff)
+    processDetectionResult(true, isFacingScreen, focusScore);
 
   } else {
     state.headPose.faceDetected = false;
     DOM.liveSinceFace.textContent = Math.round((Date.now() - state.headPose.lastFaceSeen) / 1000);
 
+    // No face — reset focus indicators
+    updateFocusIndicator(null, 0);
+    if (DOM.pipeFocus) {
+      DOM.pipeFocus.textContent = '❌ Facing Screen (No Face)';
+      DOM.pipeFocus.classList.remove('pipe-ok', 'pipe-warn');
+    }
+
     if (state.calibration.isCalibrating) return;
 
-    processDetectionResult(false, false);
+    processDetectionResult(false, false, 0);
   }
+}
+
+/**
+ * Calculate the screen focus percentage (0–100%) from smoothed head pose.
+ *
+ * Uses a smooth power curve calibrated to human eye/head gaze:
+ * - Micro-movements (0°–3.5°): 95%–100% (sitting and reading screen)
+ * - Drifting gaze towards bezel / desk (4°–7°): 85%–94%
+ * - Looking away from screen (8°+): drops rapidly to 0%
+ *
+ * @param {{ yaw: number, pitch: number }|null} pose
+ * @returns {number} — percentage integer between 0 and 100
+ */
+function calculateFocusScore(pose) {
+  if (!pose) return 0;
+
+  const threshold = SENSITIVITY[state.settings.sensitivity] || 25;
+  const neutralYaw = state.calibration.neutralYaw || 0;
+  const neutralPitch = state.calibration.neutralPitch || 0;
+
+  const yawDev = Math.abs(pose.yaw - neutralYaw);
+  let pitchDev = Math.abs(pose.pitch - neutralPitch);
+  if (state.settings.readingMode && pose.pitch > neutralPitch) {
+    pitchDev = 0; // Ignore looking down in reading mode
+  }
+
+  // Pitch is slightly less restrictive than yaw since screens have vertical height
+  const deviation = Math.hypot(yawDev, pitchDev * 0.85);
+  const x = Math.min(1.0, deviation / threshold);
+
+  // Power curve: stays >= 95% in center cone (0°–3.5°), drops sharply once turned away
+  const score = Math.max(0, Math.min(100, Math.round(100 * (1 - Math.pow(x, 1.5)))));
+  return score;
 }
 
 /**
  * Check if the user is facing the screen based on head pose.
  *
- * Compares current yaw and pitch to the calibrated neutral angle.
- * If the deviation exceeds the sensitivity threshold, the user
- * is considered to be "looking away".
- *
  * @param {{ yaw: number, pitch: number }} pose — smoothed head pose
- * @returns {boolean} — true if user is facing the screen
+ * @returns {boolean} — true if focus score meets the configured threshold
  */
 function isUserFacingScreen(pose) {
+  const score = calculateFocusScore(pose);
+  const cutoff = state.settings.focusThreshold || 95;
+  return score >= cutoff;
+}
+
+/**
+ * Update the on-screen focus indicator in the Live Tracking panel.
+ *
+ * @param {{ yaw: number, pitch: number }|null} pose — null when no face
+ * @param {number} [focusScore] — precomputed focus percentage (0–100)
+ */
+function updateFocusIndicator(pose, focusScore) {
+  if (!DOM.focusArc || !DOM.focusPctVal || !DOM.headPosDot) return;
+
   const threshold = SENSITIVITY[state.settings.sensitivity] || 25;
-  const neutralYaw = state.calibration.neutralYaw;
-  const neutralPitch = state.calibration.neutralPitch;
+  const neutralYaw = state.calibration.neutralYaw || 0;
+  const neutralPitch = state.calibration.neutralPitch || 0;
+  const cutoff = state.settings.focusThreshold || 95;
+  const CIRCUMFERENCE = 314.16; // 2π × 50
 
-  // Deviation from calibrated neutral angle
-  const yawDev = Math.abs(pose.yaw - neutralYaw);
-
-  // For pitch, if reading mode is on, ignore looking DOWN
-  // (pitch > neutral means looking down)
-  let pitchDev = Math.abs(pose.pitch - neutralPitch);
-  if (state.settings.readingMode && pose.pitch > neutralPitch) {
-    // Looking down — ignore it in reading mode
-    pitchDev = 0;
+  if (!pose) {
+    // No face — gauge at 0%
+    DOM.focusArc.style.strokeDashoffset = CIRCUMFERENCE;
+    DOM.focusArc.style.stroke = 'var(--danger)';
+    DOM.focusPctVal.textContent = '0%';
+    DOM.focusPctVal.style.color = 'var(--danger)';
+    DOM.headPosDot.style.left = '50%';
+    DOM.headPosDot.style.top = '50%';
+    DOM.headPosDot.style.background = 'var(--danger)';
+    DOM.headPosDot.style.opacity = '0.3';
+    return;
   }
 
-  // User is facing screen if both yaw and pitch are within threshold
-  return yawDev < threshold && pitchDev < threshold;
+  const focusPct = typeof focusScore === 'number' ? focusScore : calculateFocusScore(pose);
+
+  // Arc fill
+  const offset = CIRCUMFERENCE - (CIRCUMFERENCE * focusPct / 100);
+  DOM.focusArc.style.strokeDashoffset = offset;
+
+  // Colour: green (>= cutoff) → warning/amber (>= 75%) → red (< 75%)
+  const arcColour = focusPct >= cutoff
+    ? 'var(--success)'
+    : focusPct >= Math.max(60, cutoff - 15)
+      ? 'var(--warning)'
+      : 'var(--danger)';
+  DOM.focusArc.style.stroke = arcColour;
+  DOM.focusPctVal.textContent = focusPct + '%';
+  DOM.focusPctVal.style.color = arcColour;
+
+  // Head-position crosshair dot (50% = center of the grid)
+  const xPct = 50 + ((pose.yaw   - neutralYaw)   / threshold) * 45;
+  const yPct = 50 + ((pose.pitch - neutralPitch) / threshold) * 45;
+  DOM.headPosDot.style.left = Math.min(95, Math.max(5, xPct)) + '%';
+  DOM.headPosDot.style.top  = Math.min(95, Math.max(5, yPct)) + '%';
+  DOM.headPosDot.style.background = arcColour;
+  DOM.headPosDot.style.opacity = '1';
 }
 
 
@@ -1280,27 +1447,26 @@ function isUserFacingScreen(pose) {
  *
  * STATE TRANSITIONS:
  *
- * studying + face + facing screen → stay studying
- * studying + face + NOT facing screen → start lookaway timer
- *   if timer > lookawayTime → transition to looking-away
- * studying + no face → start away timer
- *   if timer > awayTime → transition to away
+ * studying + face + focus >= threshold → stay studying
+ * studying + face + focus < threshold → STOP SUDDENLY (looking-away)
+ * studying + no face → STOP SUDDENLY (away)
  *
- * looking-away + face + facing screen for 2s → resume studying
- * away + face + facing screen for 2s → resume studying
- * lid-closed + face + facing screen for 2s → resume studying
+ * looking-away / away + face + focus >= threshold for 1s → resume studying
  *
  * @param {boolean} faceDetected — is a face visible?
- * @param {boolean} facingScreen — is the face pointing at the screen?
+ * @param {boolean} facingScreen — is focus >= threshold?
+ * @param {number} [focusScore] — live focus percentage (0-100)
  */
-function processDetectionResult(faceDetected, facingScreen) {
+function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
   const now = Date.now();
   const hp = state.headPose;
+  const cutoff = state.settings.focusThreshold || 95;
+  const isFocused = faceDetected && (focusScore >= cutoff);
 
   // ── STUDYING ──
   if (state.status === 'studying') {
 
-    if (faceDetected && facingScreen) {
+    if (isFocused) {
       // All good — keep studying
       hp.lookAwayStart = 0;
       hp.awayStart = 0;
@@ -1308,45 +1474,34 @@ function processDetectionResult(faceDetected, facingScreen) {
       return;
     }
 
-    if (faceDetected && !facingScreen) {
-      // Face visible but not looking at screen — start lookaway timer
-      if (hp.lookAwayStart === 0) {
-        hp.lookAwayStart = now;
-      }
+    if (faceDetected && !isFocused) {
+      // Face visible but focus dropped below cutoff (< 95%) — SUDDEN STOP!
       hp.facingScreenSince = 0;
+      hp.lookAwayStart = now;
 
-      const lookawayDuration = (now - hp.lookAwayStart) / 1000;
-      if (lookawayDuration >= state.settings.lookawayTime) {
-        // Freeze back-dated to when the user actually looked away.
-        freezeStudyTime(hp.lookAwayStart);
-        startPauseEvent('lookAway', hp.lookAwayStart);
-        setStatus('looking-away');
-        state.session.distractions.lookAway++;
-        triggerNudge('lookAway');
-        updateSessionStatsDisplay();
-        autoSaveSession();
-      }
+      freezeStudyTime(now);
+      startPauseEvent('lookAway', now);
+      setStatus('looking-away');
+      state.session.distractions.lookAway++;
+      triggerNudge('lookAway');
+      updateSessionStatsDisplay();
+      autoSaveSession();
       return;
     }
 
     if (!faceDetected) {
-      // No face — start away timer
-      if (hp.awayStart === 0) {
-        hp.awayStart = now;
-      }
+      // Face completely lost — SUDDEN STOP!
       hp.facingScreenSince = 0;
+      hp.awayStart = now;
       hp.lookAwayStart = 0;
 
-      const awayDuration = (now - hp.awayStart) / 1000;
-      if (awayDuration >= state.settings.awayTime) {
-        freezeStudyTime(hp.awayStart);
-        startPauseEvent('away', hp.awayStart);
-        setStatus('away');
-        state.session.distractions.away++;
-        triggerNudge('away');
-        updateSessionStatsDisplay();
-        autoSaveSession();
-      }
+      freezeStudyTime(now);
+      startPauseEvent('away', now);
+      setStatus('away');
+      state.session.distractions.away++;
+      triggerNudge('away');
+      updateSessionStatsDisplay();
+      autoSaveSession();
       return;
     }
   }
@@ -1354,14 +1509,14 @@ function processDetectionResult(faceDetected, facingScreen) {
   // ── LOOKING AWAY / AWAY / LID CLOSED — waiting to resume ──
   if (['looking-away', 'away', 'lid-closed'].includes(state.status)) {
 
-    if (faceDetected && facingScreen) {
-      // User is back and facing screen — start the 2-second resume timer
+    if (isFocused) {
+      // User is back and focused on screen — require 1s of steady focus to resume
       if (hp.facingScreenSince === 0) {
         hp.facingScreenSince = now;
       }
 
       const facingDuration = now - hp.facingScreenSince;
-      if (facingDuration >= CONFIG.resumeDelayMs) {
+      if (facingDuration >= 1000) {
         hp.lookAwayStart = 0;
         hp.awayStart = 0;
         endPauseEvent(now);
