@@ -1,6 +1,6 @@
 {
-  "name": "AI Spectator — Study Time Tracker",
-  "short_name": "AI Spectator",
+  "name": "Ayush_Tracker — Study Time Tracker",
+  "short_name": "Ayush_Tracker",
   "description": "Track your study time with webcam-based focus detection. Timer runs only while you face the screen.",
   "start_url": "./index.html",
   "display": "standalone",

@@ -1,5 +1,5 @@
 /* ============================================
-   AI Spectator — Web Worker (Heartbeat Ticker)
+   Ayush_Tracker — Web Worker (Heartbeat Ticker)
    ============================================
    
    WHY A WEB WORKER?

@@ -1,5 +1,5 @@
 /* ============================================
-   AI Spectator — Main Application (app.js)
+   Ayush_Tracker — Main Application (app.js)
    ============================================
    
    This is the main entry point. It handles:
@@ -59,21 +59,30 @@ const DOM = {
   cameraIndicator: document.getElementById('camera-indicator'),
   pipBtn:          document.getElementById('pip-btn'),
   themeToggle:     document.getElementById('theme-toggle'),
-  settingsBtn:     document.getElementById('settings-btn'),
+  settingsBtn:     document.getElementById('settings-btn') || document.getElementById('nav-settings'),
 
-  // Tabs
-  tabTimer:     document.getElementById('tab-timer'),
-  tabDashboard: document.getElementById('tab-dashboard'),
+  // Navigation
+  navHome:      document.getElementById('nav-home'),
+  navHistory:   document.getElementById('nav-history'),
+  navSettings:  document.getElementById('nav-settings'),
+  tabTimer:     document.getElementById('nav-home') || document.getElementById('tab-timer'),
+  tabDashboard: document.getElementById('nav-history') || document.getElementById('tab-dashboard'),
 
-  // Timer view
-  timerView:      document.getElementById('timer-view'),
+  // Views
+  homeView:       document.getElementById('home-view'),
+  historyView:    document.getElementById('history-view'),
+  timerView:      document.getElementById('home-view') || document.getElementById('timer-view'),
+  dashboardView:  document.getElementById('history-view') || document.getElementById('dashboard-view'),
+
+  // Hero Card
   statusChip:     document.getElementById('status-chip'),
   statusText:     document.getElementById('status-text'),
   timerDisplay:   document.getElementById('timer-display'),
   sessionStats:   document.getElementById('session-stats'),
-  statFocus:      document.getElementById('stat-focus'),
-  statDistractions: document.getElementById('stat-distractions'),
+  statFocus:      document.getElementById('stat-focus') || document.getElementById('home-focus'),
+  statDistractions: document.getElementById('stat-distractions') || document.getElementById('home-distractions'),
   statSessionTime: document.getElementById('stat-session-time'),
+  statPausedTime: document.getElementById('stat-paused-time'),
   startBtn:       document.getElementById('start-btn'),
   endBtn:         document.getElementById('end-btn'),
   cameraPreviewContainer: document.getElementById('camera-preview-container'),
@@ -82,8 +91,17 @@ const DOM = {
   alertIcon:      document.getElementById('alert-icon'),
   alertText:      document.getElementById('alert-text'),
 
-  // Dashboard view
-  dashboardView:   document.getElementById('dashboard-view'),
+  // Home Summary & Progress
+  homeStudyTime:      document.getElementById('home-study-time'),
+  homeFocus:          document.getElementById('home-focus'),
+  homeDistractions:   document.getElementById('home-distractions'),
+  goalProgressText:   document.getElementById('goal-progress-text'),
+  goalProgressBar:    document.getElementById('goal-progress-bar'),
+  homeStreakBadge:    document.getElementById('home-streak-badge'),
+  homeRecentEvents:   document.getElementById('home-recent-events'),
+  homeRecentSessions: document.getElementById('home-recent-sessions'),
+
+  // History / Dashboard view
   dashStudyTime:   document.getElementById('dash-study-time'),
   dashFocus:       document.getElementById('dash-focus'),
   dashDistractions: document.getElementById('dash-distractions'),
@@ -93,7 +111,7 @@ const DOM = {
   weeklyTotal:     document.getElementById('weekly-total'),
   chartContainer:  document.getElementById('chart-container'),
   dailyGoalDisplay: document.getElementById('daily-goal-display'),
-  streakBadge:     document.getElementById('streak-badge'),
+  streakBadge:     document.getElementById('streak-badge') || document.getElementById('home-streak-badge'),
   sessionList:     document.getElementById('session-list'),
   exportCsvBtn:    document.getElementById('export-csv-btn'),
   deleteAllBtn:    document.getElementById('delete-all-btn'),
@@ -211,19 +229,15 @@ const state = {
   // ── Session data ──
   session: {
     active: false,
-    startTime: null,           // wall-clock ms when session started
-    studyStartedAt: null,      // wall-clock ms when the current study run began (null if paused)
-    accStudyMs: 0,             // study ms accumulated before the current run
-    studyTime: 0,              // total study ms = accStudyMs + (now - studyStartedAt) when studying
-    sessionTime: 0,            // total session duration in ms
-    unverifiedTime: 0,         // time where detection stalled (tab backgrounded)
-    distractions: {
-      lookAway: 0,
-      away: 0,
-      lidClosed: 0,
-    },
-    pauses: [],                // array of { start, end, type }
-    lastStudyTimestamp: null,
+    id: null,                  // unique id, set on Start so autosave can upsert
+    startTime: null,
+    studyStartedAt: null,      // wall-clock ms when the current study run began (null when paused)
+    accStudyMs: 0,             // study ms accumulated across all completed runs
+    studyTime: 0,              // total study ms = accStudyMs + (now − studyStartedAt) live
+    sessionTime: 0,
+    unverifiedTime: 0,
+    distractions: { lookAway: 0, away: 0, lidClosed: 0 },
+    pauses: [],                // [{ type, start, end }]
   },
 
   // ── Worker ──
@@ -267,7 +281,7 @@ const CONFIG = {
 
 function loadSettings() {
   try {
-    const saved = localStorage.getItem('ai-spectator-settings');
+    const saved = localStorage.getItem('ayush-tracker-settings') || localStorage.getItem('ai-spectator-settings');
     if (saved) {
       Object.assign(state.settings, JSON.parse(saved));
     }
@@ -289,7 +303,7 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    localStorage.setItem('ai-spectator-settings', JSON.stringify(state.settings));
+    localStorage.setItem('ayush-tracker-settings', JSON.stringify(state.settings));
   } catch (e) {
     console.warn('Could not save settings:', e);
   }
@@ -343,7 +357,9 @@ function initSettingsListeners() {
 
   DOM.settingCameraPreview.addEventListener('change', (e) => {
     state.settings.cameraPreview = e.target.checked;
-    DOM.cameraPreviewContainer.classList.toggle('visible', e.target.checked);
+    if (DOM.cameraPreviewContainer) {
+      DOM.cameraPreviewContainer.classList.toggle('visible', e.target.checked);
+    }
     saveSettings();
   });
 }
@@ -354,7 +370,7 @@ function initSettingsListeners() {
 // ═══════════════════════════════════════════════
 
 function initTheme() {
-  const saved = localStorage.getItem('ai-spectator-theme');
+  const saved = localStorage.getItem('ayush-tracker-theme') || localStorage.getItem('ai-spectator-theme');
   if (saved) {
     state.theme = saved;
   } else {
@@ -379,7 +395,7 @@ function applyTheme() {
 
 function toggleTheme() {
   state.theme = state.theme === 'dark' ? 'light' : 'dark';
-  localStorage.setItem('ai-spectator-theme', state.theme);
+  localStorage.setItem('ayush-tracker-theme', state.theme);
   applyTheme();
 }
 
@@ -390,13 +406,32 @@ function toggleTheme() {
 
 function switchTab(tab) {
   state.activeTab = tab;
-  DOM.tabTimer.classList.toggle('active', tab === 'timer');
-  DOM.tabDashboard.classList.toggle('active', tab === 'dashboard');
-  DOM.tabTimer.setAttribute('aria-selected', tab === 'timer');
-  DOM.tabDashboard.setAttribute('aria-selected', tab === 'dashboard');
-  DOM.timerView.classList.toggle('hidden', tab !== 'timer');
-  DOM.dashboardView.classList.toggle('hidden', tab !== 'dashboard');
-  if (tab === 'dashboard') refreshDashboard();
+  const isHome = (tab === 'home' || tab === 'timer');
+  const isHistory = (tab === 'history' || tab === 'dashboard');
+
+  if (DOM.navHome) {
+    DOM.navHome.classList.toggle('active', isHome);
+    DOM.navHome.setAttribute('aria-selected', isHome);
+  }
+  if (DOM.navHistory) {
+    DOM.navHistory.classList.toggle('active', isHistory);
+    DOM.navHistory.setAttribute('aria-selected', isHistory);
+  }
+  if (DOM.tabTimer && DOM.tabTimer !== DOM.navHome) {
+    DOM.tabTimer.classList.toggle('active', isHome);
+    DOM.tabTimer.setAttribute('aria-selected', isHome);
+  }
+  if (DOM.tabDashboard && DOM.tabDashboard !== DOM.navHistory) {
+    DOM.tabDashboard.classList.toggle('active', isHistory);
+    DOM.tabDashboard.setAttribute('aria-selected', isHistory);
+  }
+
+  if (DOM.homeView) DOM.homeView.classList.toggle('hidden', !isHome);
+  if (DOM.historyView) DOM.historyView.classList.toggle('hidden', !isHistory);
+  if (DOM.timerView && DOM.timerView !== DOM.homeView) DOM.timerView.classList.toggle('hidden', !isHome);
+  if (DOM.dashboardView && DOM.dashboardView !== DOM.historyView) DOM.dashboardView.classList.toggle('hidden', !isHistory);
+
+  refreshDashboard();
 }
 
 
@@ -420,14 +455,14 @@ function closeSettings() {
 // ═══════════════════════════════════════════════
 
 function initPrivacyModal() {
-  const accepted = localStorage.getItem('ai-spectator-privacy-accepted');
+  const accepted = localStorage.getItem('ayush-tracker-privacy-accepted') || localStorage.getItem('ai-spectator-privacy-accepted');
   if (!accepted) {
     DOM.privacyModal.classList.add('active');
   }
 }
 
 function acceptPrivacy() {
-  localStorage.setItem('ai-spectator-privacy-accepted', 'true');
+  localStorage.setItem('ayush-tracker-privacy-accepted', 'true');
   DOM.privacyModal.classList.remove('active');
   if (state.settings.notificationsOn) requestNotificationPermission();
 }
@@ -447,7 +482,7 @@ function initInstallPrompt() {
   window.addEventListener('appinstalled', () => {
     DOM.installPrompt.classList.remove('visible');
     state.deferredInstallPrompt = null;
-    showToast('success', 'Installed!', 'AI Spectator is now a desktop app.');
+    showToast('success', 'Installed!', 'Ayush_Tracker is now a desktop app.');
   });
 }
 
@@ -585,13 +620,33 @@ function setStatus(status, text) {
 // LIVE PANEL HELPERS
 // ═══════════════════════════════════════════════
 
+const recentEventsLog = [];
+
+function renderRecentEvents() {
+  if (!DOM.homeRecentEvents) return;
+  if (recentEventsLog.length === 0) {
+    DOM.homeRecentEvents.innerHTML = '<li class="empty-recent-item">No events recorded yet</li>';
+    return;
+  }
+  DOM.homeRecentEvents.innerHTML = recentEventsLog.map(e => `<li>${e}</li>`).join('');
+}
+
 function logEvent(msg) {
   const time = new Date().toLocaleTimeString();
-  const li = document.createElement('li');
-  li.textContent = `[${time}] ${msg}`;
-  DOM.liveEvents.prepend(li);
-  if (DOM.liveEvents.children.length > 10) {
-    DOM.liveEvents.lastChild.remove();
+  const entry = `[${time}] ${msg}`;
+  recentEventsLog.unshift(entry);
+  if (recentEventsLog.length > 5) {
+    recentEventsLog.pop();
+  }
+  renderRecentEvents();
+
+  if (DOM.liveEvents) {
+    const li = document.createElement('li');
+    li.textContent = entry;
+    DOM.liveEvents.prepend(li);
+    if (DOM.liveEvents.children.length > 10) {
+      DOM.liveEvents.lastChild.remove();
+    }
   }
 }
 
@@ -702,7 +757,7 @@ function triggerNudge(type) {
     showAlert('paused', icon, `<strong>Timer paused.</strong> ${msg}`);
     
     if (state.settings.notificationsOn && Notification.permission === 'granted') {
-      new Notification("AI Spectator", { body: msg, icon: './icons/icon-192.png' });
+      new Notification("Ayush_Tracker", { body: msg, icon: './icons/icon-192.png' });
     }
   } 
   else if (type === 'resumed') {
@@ -744,7 +799,7 @@ async function startCamera() {
     DOM.cameraIndicator.classList.add('visible');
 
     // Show preview if enabled in settings
-    if (state.settings.cameraPreview) {
+    if (state.settings.cameraPreview && DOM.cameraPreviewContainer) {
       DOM.cameraPreviewContainer.classList.add('visible');
     }
 
@@ -757,7 +812,7 @@ async function startCamera() {
   } catch (err) {
     console.error('Camera access denied or failed:', err);
     showToast('error', 'Camera required',
-      'AI Spectator needs your webcam to detect focus. Please allow camera access and try again.');
+      'Ayush_Tracker needs your webcam to detect focus. Please allow camera access and try again.');
     return false;
   }
 }
@@ -766,15 +821,19 @@ async function startCamera() {
  * Stop the camera and release all resources.
  */
 function stopCamera() {
+  if (state.camera.videoTrack) {
+    state.camera.videoTrack.removeEventListener('ended', handleCameraTrackEnded);
+  }
+
   if (state.camera.stream) {
     state.camera.stream.getTracks().forEach(track => track.stop());
     state.camera.stream = null;
     state.camera.videoTrack = null;
   }
 
-  DOM.cameraPreview.srcObject = null;
-  DOM.cameraIndicator.classList.remove('visible');
-  DOM.cameraPreviewContainer.classList.remove('visible');
+  if (DOM.cameraPreview) DOM.cameraPreview.srcObject = null;
+  if (DOM.cameraIndicator) DOM.cameraIndicator.classList.remove('visible');
+  if (DOM.cameraPreviewContainer) DOM.cameraPreviewContainer.classList.remove('visible');
 
   console.log('📷 Camera stopped');
 }
@@ -786,12 +845,14 @@ function stopCamera() {
  */
 function handleCameraTrackEnded() {
   if (state.session.active && state.status !== 'idle' && state.status !== 'lid-closed') {
-    // Freeze study time at this exact moment before transitioning.
-    freezeStudyTime(Date.now());
+    const now = Date.now();
+    freezeStudyTime(now);
+    startPauseEvent('cameraLost', now);
     setStatus('lid-closed');
     showAlert('paused', '💤', '<strong>Camera lost.</strong> Timer paused. Reopen and I\'ll welcome you back.');
     state.session.distractions.lidClosed++;
     updateSessionStatsDisplay();
+    autoSaveSession();
   }
 }
 
@@ -1072,6 +1133,9 @@ function stopDetectionLoop() {
     cancelAnimationFrame(state.camera.detectionRAF);
     state.camera.detectionRAF = null;
   }
+  updatePipeline('Cam', false);
+  updatePipeline('Face', false);
+  updatePipeline('Worker', false);
   console.log('🔍 Detection loop stopped');
 }
 
@@ -1253,12 +1317,14 @@ function processDetectionResult(faceDetected, facingScreen) {
 
       const lookawayDuration = (now - hp.lookAwayStart) / 1000;
       if (lookawayDuration >= state.settings.lookawayTime) {
-        // Freeze study time back-dated to the moment the user actually looked away.
+        // Freeze back-dated to when the user actually looked away.
         freezeStudyTime(hp.lookAwayStart);
+        startPauseEvent('lookAway', hp.lookAwayStart);
         setStatus('looking-away');
         state.session.distractions.lookAway++;
         triggerNudge('lookAway');
         updateSessionStatsDisplay();
+        autoSaveSession();
       }
       return;
     }
@@ -1273,12 +1339,13 @@ function processDetectionResult(faceDetected, facingScreen) {
 
       const awayDuration = (now - hp.awayStart) / 1000;
       if (awayDuration >= state.settings.awayTime) {
-        // Freeze study time back-dated to when the face was first lost.
         freezeStudyTime(hp.awayStart);
+        startPauseEvent('away', hp.awayStart);
         setStatus('away');
         state.session.distractions.away++;
         triggerNudge('away');
         updateSessionStatsDisplay();
+        autoSaveSession();
       }
       return;
     }
@@ -1297,13 +1364,13 @@ function processDetectionResult(faceDetected, facingScreen) {
       if (facingDuration >= CONFIG.resumeDelayMs) {
         hp.lookAwayStart = 0;
         hp.awayStart = 0;
-        // Mark this wall-clock moment as when study resumed.
+        endPauseEvent(now);
         resumeStudyTime(now);
         setStatus('studying');
         triggerNudge('resumed');
+        autoSaveSession();
       }
     } else {
-      // Not facing screen yet — reset the resume timer
       hp.facingScreenSince = 0;
     }
     return;
@@ -1327,19 +1394,29 @@ function processDetectionResult(faceDetected, facingScreen) {
 function freezeStudyTime(pauseAt) {
   const s = state.session;
   if (s.studyStartedAt === null) return; // already frozen
-  // Add only the time from when study last resumed up to the pause moment.
   s.accStudyMs += Math.max(0, pauseAt - s.studyStartedAt);
   s.studyTime = s.accStudyMs;
-  s.studyStartedAt = null; // paused
+  s.studyStartedAt = null;
+}
+
+function resumeStudyTime(resumeAt) {
+  state.session.studyStartedAt = resumeAt;
 }
 
 /**
- * Resume the study timer from an exact timestamp.
- * @param {number} resumeAt — wall-clock ms when study resumed
+ * Open a new pause event in the session's pauses list.
+ * The event is closed by endPauseEvent when study resumes.
  */
-function resumeStudyTime(resumeAt) {
-  state.session.studyStartedAt = resumeAt;
-  // accStudyMs stays as-is; handleTick will recompute studyTime live.
+function startPauseEvent(type, timestamp) {
+  state.session.pauses.push({ type, start: timestamp, end: null });
+}
+
+/**
+ * Close the most-recent open pause event.
+ */
+function endPauseEvent(timestamp) {
+  const open = state.session.pauses.slice().reverse().find(p => p.end === null);
+  if (open) open.end = timestamp;
 }
 
 
@@ -1353,18 +1430,18 @@ function resumeStudyTime(resumeAt) {
 function updateSessionStatsDisplay() {
   const s = state.session;
   const totalDistractions = s.distractions.lookAway + s.distractions.away + s.distractions.lidClosed;
-  DOM.statDistractions.textContent = totalDistractions;
+  if (DOM.statDistractions) DOM.statDistractions.textContent = totalDistractions;
+  if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDistractions;
 
   // Focus % = study time / session time
-  if (s.sessionTime > 0) {
-    const focusPercent = Math.round((s.studyTime / s.sessionTime) * 100);
-    DOM.statFocus.textContent = focusPercent + '%';
-  } else {
-    DOM.statFocus.textContent = '100%';
-  }
+  const focusPercent = s.sessionTime > 0 ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
+  if (DOM.statFocus) DOM.statFocus.textContent = focusPercent + '%';
+  if (DOM.homeFocus) DOM.homeFocus.textContent = focusPercent + '%';
 
-  // Session duration
-  DOM.statSessionTime.textContent = formatDuration(s.sessionTime);
+  // Hero subtimes: Session time and Paused time
+  const pausedMs = Math.max(0, s.sessionTime - s.studyTime - (s.unverifiedTime || 0));
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(s.sessionTime);
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
 }
 
 
@@ -1425,8 +1502,8 @@ function handleTick(data) {
   if (gap > CONFIG.lidGapMs && state.session.active && state.status !== 'idle') {
 
     if (state.status !== 'lid-closed') {
-      // Freeze study time at the last known tick (best approximation of when sleep started).
       freezeStudyTime(state.lastTickTimestamp);
+      startPauseEvent('lidClosed', state.lastTickTimestamp);
       setStatus('lid-closed');
       state.headPose.faceDetected = false;
       state.headPose.facingScreenSince = 0;
@@ -1441,9 +1518,10 @@ function handleTick(data) {
       showAlert('welcome-back', '👋', `<strong>Welcome back!</strong> ${msg}`);
       playSoftChime();
       if (state.settings.notificationsOn && Notification.permission === 'granted') {
-        new Notification('AI Spectator', { body: `Welcome back! ${msg}`, icon: './icons/icon-192.png' });
+        new Notification('Ayush_Tracker', { body: `Welcome back! ${msg}`, icon: './icons/icon-192.png' });
       }
       updateSessionStatsDisplay();
+      autoSaveSession();
     }
   }
 
@@ -1471,9 +1549,9 @@ function handleTick(data) {
     updateSessionStatsDisplay();
     updatePiP();
 
-    DOM.liveSession.textContent = Math.round(state.session.sessionTime / 1000);
-    DOM.liveStudy.textContent   = Math.round(state.session.studyTime   / 1000);
-    DOM.livePauses.textContent  =
+    if (DOM.liveSession) DOM.liveSession.textContent = Math.round(state.session.sessionTime / 1000);
+    if (DOM.liveStudy) DOM.liveStudy.textContent   = Math.round(state.session.studyTime   / 1000);
+    if (DOM.livePauses) DOM.livePauses.textContent  =
       state.session.distractions.lookAway +
       state.session.distractions.away +
       state.session.distractions.lidClosed;
@@ -1487,30 +1565,16 @@ function handleTick(data) {
 // 22. SESSION — Start / End
 // ═══════════════════════════════════════════════
 
-/**
- * Start a study session.
- * This is the main flow when the user clicks "Start Studying":
- * 1. Load MediaPipe (first time only)
- * 2. Start camera
- * 3. Run calibration
- * 4. Start detection loop & worker
- * 5. Set status to studying
- */
 async function handleStart() {
   DOM.startBtn.disabled = true;
   hideLiveError();
   logEvent('Start button clicked');
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Starting…';
 
-  // 0. Initialise AudioContext on user gesture
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
+  // Unlock AudioContext on user gesture (browsers require this)
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
 
-  // 1. Load MediaPipe module (first time)
   if (!state.camera.faceLandmarker) {
     DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Loading AI Model…';
     const landmarkerReady = await initFaceLandmarker();
@@ -1521,7 +1585,6 @@ async function handleStart() {
     }
   }
 
-  // 2. Start camera
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Waiting for Camera…';
   const cameraReady = await startCamera();
   if (!cameraReady) {
@@ -1530,10 +1593,8 @@ async function handleStart() {
     return;
   }
 
-  // 3. Start detection loop (needs to run during calibration)
   startDetectionLoop();
 
-  // 4. Wait a moment for the video to stabilise, then calibrate
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Waiting for Face…';
   await new Promise(r => setTimeout(r, 500));
   const calibrated = await runCalibration();
@@ -1545,106 +1606,183 @@ async function handleStart() {
     return;
   }
 
-  // 5. Start the worker heartbeat
   startWorker();
 
-  // 6. Initialise session data
   const now = Date.now();
   state.session = {
     active: true,
+    id: 'sess_' + now,         // stable id so every autosave upserts the same row
     startTime: now,
-    studyStartedAt: now,   // study run begins immediately after calibration
+    studyStartedAt: now,
     accStudyMs: 0,
     studyTime: 0,
     sessionTime: 0,
     unverifiedTime: 0,
     distractions: { lookAway: 0, away: 0, lidClosed: 0 },
     pauses: [],
-    lastStudyTimestamp: now,
   };
 
-  // 7. Reset head pose tracking
   state.headPose.lookAwayStart = 0;
   state.headPose.awayStart = 0;
   state.headPose.facingScreenSince = now;
 
-  // 8. Update UI
   DOM.startBtn.classList.add('hidden');
   DOM.endBtn.classList.remove('hidden');
-  DOM.sessionStats.classList.add('visible');
+  if (DOM.sessionStats) DOM.sessionStats.classList.add('visible');
   DOM.timerDisplay.textContent = '00:00:00';
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
   setStatus('studying');
   hideAlert();
 
   DOM.startBtn.disabled = false;
   DOM.startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Studying';
+
+  // First save creates the row immediately so recovery can find it.
+  await autoSaveSession();
+
+  // Autosave every 15 seconds while a session is active.
+  state.autoSaveInterval = setInterval(autoSaveSession, 15000);
 }
 
-/**
- * End the current study session.
- */
 function handleEnd() {
-  // Stop everything
+  clearInterval(state.autoSaveInterval);
+
+  // Set session inactive FIRST so no incoming worker ticks or events can advance it
+  state.session.active = false;
+
   stopDetectionLoop();
   stopCamera();
   stopWorker();
 
-  // Mark session as ended
-  state.session.active = false;
-  const finalStudyTime = state.session.studyTime;
-  const finalSessionTime = state.session.sessionTime;
+  // Freeze at end time so studyTime is final before we read it.
+  const endTime = Date.now();
+  if (state.status === 'studying') freezeStudyTime(endTime);
+  // Close any open pause event.
+  endPauseEvent(endTime);
 
-  console.log(`📚 Session ended: studied ${formatDuration(finalStudyTime)} ` +
-              `out of ${formatDuration(finalSessionTime)}`);
+  const finalStudyTime  = state.session.studyTime;
+  const finalSessionTime = endTime - state.session.startTime;
 
-  // Update UI
   DOM.startBtn.classList.remove('hidden');
   DOM.endBtn.classList.add('hidden');
-  DOM.sessionStats.classList.remove('visible');
+  if (DOM.sessionStats) DOM.sessionStats.classList.remove('visible');
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+  DOM.timerDisplay.textContent = formatTime(finalStudyTime);
   setStatus('idle');
   hideAlert();
 
   showToast('info', 'Session ended',
     `You studied for ${formatDuration(finalStudyTime)}. Great work! 🎉`);
 
-  // Save to IndexedDB
-  const sessionRecord = {
-    id: 'sess_' + Date.now(),
-    startTime: state.session.startTime,
-    endTime: Date.now(),
-    studyTime: finalStudyTime,
-    sessionTime: finalSessionTime,
-    unverifiedTime: state.session.unverifiedTime,
-    distractions: { ...state.session.distractions }
-  };
-  
-  DB.saveSession(sessionRecord).then(() => {
-    if (state.activeTab === 'dashboard') refreshDashboard();
-  }).catch(e => console.error('Failed to save session:', e));
+  // Final save with endTime set.
+  const record = buildSessionRecord(endTime);
+  DB.saveSession(record)
+    .then(() => refreshDashboard())
+    .catch(e => showToast('error', 'Save failed', 'Could not save session: ' + e));
 }
 
 // ═══════════════════════════════════════════════
-// 22B. DATABASE (IndexedDB)
+// 22B. SESSION PERSISTENCE HELPERS
+// ═══════════════════════════════════════════════
+
+/**
+ * Build a plain-object record from live session state.
+ * @param {number|null} endTime — if set, this is the final save.
+ */
+function buildSessionRecord(endTime = null) {
+  const s = state.session;
+  const now = endTime || Date.now();
+
+  // Compute live studyTime if we are currently studying.
+  let studyTime = s.accStudyMs;
+  if (s.studyStartedAt !== null) {
+    studyTime += Math.max(0, now - s.studyStartedAt);
+  }
+  const sessionTime = s.startTime ? now - s.startTime : 0;
+  const pausedTime  = Math.max(0, sessionTime - studyTime - s.unverifiedTime);
+
+  return {
+    id:            s.id,
+    startTime:     s.startTime,
+    endTime:       endTime,          // null means unfinished
+    studyTime,
+    sessionTime,
+    pausedTime,
+    unverifiedTime: s.unverifiedTime,
+    distractions:  { ...s.distractions },
+    pauses:        s.pauses.map(p => ({ ...p })),
+    lastSaved:     Date.now(),
+  };
+}
+
+/**
+ * Upsert the live session into IndexedDB.
+ * Shows a toast if storage fails so errors are never silent.
+ */
+async function autoSaveSession() {
+  if (!state.session.active) return;
+  try {
+    await DB.saveSession(buildSessionRecord());
+  } catch (e) {
+    showToast('error', 'Auto-save failed',
+      'Could not save your session to storage. ' + (e?.message || e));
+  }
+}
+
+/**
+ * On startup, find sessions that have no endTime (the app was closed
+ * mid-session). Close them at their lastSaved timestamp so they appear
+ * in the history with accurate data rather than disappearing.
+ */
+async function recoverUnfinishedSessions() {
+  try {
+    const all = await DB.getAllSessions(true);
+    const unfinished = all.filter(s => s.endTime === null);
+    if (unfinished.length === 0) return;
+
+    for (const s of unfinished) {
+      s.endTime = s.lastSaved || s.startTime;
+      s.sessionTime = s.endTime - s.startTime;
+      s.pausedTime = Math.max(0, s.sessionTime - s.studyTime - (s.unverifiedTime || 0));
+      if (Array.isArray(s.pauses)) {
+        s.pauses.forEach(p => {
+          if (p.end === null) p.end = s.endTime;
+        });
+      }
+      await DB.saveSession(s);
+    }
+    showToast('info', `Recovered ${unfinished.length} session${unfinished.length > 1 ? 's' : ''}`,
+      'A previous session was closed unexpectedly. It has been saved.');
+  } catch (e) {
+    showToast('error', 'Recovery failed', 'Could not recover previous session: ' + (e?.message || e));
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// 22C. DATABASE (IndexedDB)
 // ═══════════════════════════════════════════════
 
 const DB = {
   db: null,
-  name: 'ai-spectator-db',
+  name: 'ayush-tracker-db',
   version: 1,
 
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.name, this.version);
-      
-      request.onerror = (event) => reject('IndexedDB error: ' + event.target.error);
-      
-      request.onsuccess = (event) => {
-        this.db = event.target.result;
+      request.onerror   = (e) => reject('IndexedDB error: ' + e.target.error);
+      request.onsuccess = async (e) => {
+        this.db = e.target.result;
+        try {
+          await this.migrateFromOldDb();
+        } catch (_) {}
         resolve();
       };
-      
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
         if (!db.objectStoreNames.contains('sessions')) {
           const store = db.createObjectStore('sessions', { keyPath: 'id' });
           store.createIndex('startTime', 'startTime', { unique: false });
@@ -1653,42 +1791,82 @@ const DB = {
     });
   },
 
-  async saveSession(sessionData) {
+  async migrateFromOldDb() {
+    try {
+      if (!('databases' in indexedDB)) return;
+      const dbs = await indexedDB.databases();
+      const oldDbExists = dbs.some(d => d.name === 'ai-spectator-db');
+      if (!oldDbExists) return;
+
+      const hasData = await new Promise(res => {
+        const tx = this.db.transaction(['sessions'], 'readonly');
+        const req = tx.objectStore('sessions').count();
+        req.onsuccess = () => res(req.result > 0);
+        req.onerror = () => res(false);
+      });
+      if (hasData) return;
+
+      const openReq = indexedDB.open('ai-spectator-db');
+      openReq.onsuccess = (e) => {
+        const oldDb = e.target.result;
+        if (!oldDb.objectStoreNames.contains('sessions')) {
+          oldDb.close();
+          return;
+        }
+        const tx = oldDb.transaction(['sessions'], 'readonly');
+        const req = tx.objectStore('sessions').getAll();
+        req.onsuccess = () => {
+          const oldSessions = req.result || [];
+          if (oldSessions.length > 0) {
+            const newTx = this.db.transaction(['sessions'], 'readwrite');
+            const newStore = newTx.objectStore('sessions');
+            oldSessions.forEach(s => newStore.put(s));
+          }
+          oldDb.close();
+        };
+        req.onerror = () => oldDb.close();
+      };
+    } catch (_) {}
+  },
+
+  async saveSession(data) {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['sessions'], 'readwrite');
-      const store = transaction.objectStore('sessions');
-      const request = store.add(sessionData);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      const tx    = this.db.transaction(['sessions'], 'readwrite');
+      const store = tx.objectStore('sessions');
+      // put() inserts or replaces, so autosave can overwrite earlier drafts.
+      const req   = store.put(data);
+      req.onsuccess = () => resolve();
+      req.onerror   = () => reject(req.error);
     });
   },
 
-  async getAllSessions() {
+  async getAllSessions(includeUnfinished = false) {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['sessions'], 'readonly');
-      const store = transaction.objectStore('sessions');
-      const index = store.index('startTime');
-      const request = index.getAll();
-      request.onsuccess = () => {
-        // Sort descending
-        resolve(request.result.sort((a, b) => b.startTime - a.startTime));
+      const tx    = this.db.transaction(['sessions'], 'readonly');
+      const store = tx.objectStore('sessions');
+      const req   = store.index('startTime').getAll();
+      req.onsuccess = () => {
+        let results = req.result;
+        if (!includeUnfinished) {
+          results = results.filter(s => s.endTime !== null);
+        }
+        resolve(results.sort((a, b) => b.startTime - a.startTime));
       };
-      request.onerror = () => reject(request.error);
+      req.onerror = () => reject(req.error);
     });
   },
 
   async clearAll() {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['sessions'], 'readwrite');
-      const store = transaction.objectStore('sessions');
-      const request = store.clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      const tx  = this.db.transaction(['sessions'], 'readwrite');
+      const req = tx.objectStore('sessions').clear();
+      req.onsuccess = () => resolve();
+      req.onerror   = () => reject(req.error);
     });
-  }
+  },
 };
 
 
@@ -1745,19 +1923,24 @@ function buildDashboardStats(sessions) {
   });
 
   // Update UI Stats
-  DOM.dashStudyTime.textContent = formatDuration(todayStudy);
+  if (DOM.dashStudyTime) DOM.dashStudyTime.textContent = formatDuration(todayStudy);
   
   const focusPercent = todaySession > 0 ? Math.round((todayStudy / todaySession) * 100) : 100;
-  DOM.dashFocus.textContent = focusPercent + '%';
+  if (DOM.dashFocus) DOM.dashFocus.textContent = focusPercent + '%';
   
   const totalDist = todayDist.lookAway + todayDist.away + todayDist.lidClosed;
-  DOM.dashDistractions.textContent = totalDist;
+  if (DOM.dashDistractions) DOM.dashDistractions.textContent = totalDist;
   
-  DOM.distLookAway.textContent = todayDist.lookAway;
-  DOM.distAway.textContent = todayDist.away;
-  DOM.distLid.textContent = todayDist.lidClosed;
+  if (DOM.distLookAway) DOM.distLookAway.textContent = todayDist.lookAway;
+  if (DOM.distAway) DOM.distAway.textContent = todayDist.away;
+  if (DOM.distLid) DOM.distLid.textContent = todayDist.lidClosed;
   
-  DOM.weeklyTotal.textContent = formatDuration(weeklyStudy);
+  if (DOM.weeklyTotal) DOM.weeklyTotal.textContent = formatDuration(weeklyStudy);
+
+  // Update Summary cards on Home
+  if (DOM.homeStudyTime) DOM.homeStudyTime.textContent = formatDuration(todayStudy);
+  if (DOM.homeFocus) DOM.homeFocus.textContent = focusPercent + '%';
+  if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDist;
 
   // Calculate Streak
   let streak = 0;
@@ -1769,9 +1952,6 @@ function buildDashboardStats(sessions) {
     const studied = dailyTotals[dStr] || 0;
     
     if (i === 0 && studied < goalMs) {
-      // It's today, maybe they just haven't met the goal yet.
-      // Don't break the streak if they still have time today,
-      // just ignore today for streak counting if unmet.
       continue;
     }
     
@@ -1782,7 +1962,42 @@ function buildDashboardStats(sessions) {
     }
   }
   
-  DOM.streakBadge.textContent = `🔥 ${streak} Day Streak`;
+  if (DOM.streakBadge) DOM.streakBadge.textContent = `🔥 ${streak} Day Streak`;
+  if (DOM.homeStreakBadge) DOM.homeStreakBadge.textContent = `🔥 ${streak} Day Streak`;
+
+  // Daily goal progress on Home
+  const goalPct = Math.min(100, Math.round((todayStudy / goalMs) * 100));
+  if (DOM.goalProgressText) {
+    DOM.goalProgressText.textContent = `${(todayStudy / 3600000).toFixed(1)}h of ${state.settings.dailyGoal}h (${goalPct}%)`;
+  }
+  if (DOM.goalProgressBar) {
+    DOM.goalProgressBar.style.width = goalPct + '%';
+  }
+
+  // Render recent sessions on Home
+  renderRecentSessions(sessions);
+}
+
+function renderRecentSessions(sessions) {
+  if (!DOM.homeRecentSessions) return;
+  const recent = sessions.slice(0, 3);
+  if (recent.length === 0) {
+    DOM.homeRecentSessions.innerHTML = '<div class="empty-recent-item">No sessions completed yet</div>';
+    return;
+  }
+  DOM.homeRecentSessions.innerHTML = recent.map(s => {
+    const focusPct = s.sessionTime > 0 ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
+    const totalDist = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
+    return `
+      <div class="recent-session-item">
+        <div class="recent-session-info">
+          <div class="recent-session-date">${new Date(s.startTime).toLocaleDateString()} &bull; ${formatTimestamp(s.startTime)}</div>
+          <div class="recent-session-meta">Focus: ${focusPct}% &bull; ${totalDist} dist.</div>
+        </div>
+        <div class="recent-session-dur">${formatDuration(s.studyTime)}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function buildChart(sessions) {
@@ -1841,36 +2056,42 @@ function buildChart(sessions) {
 
 function buildSessionList(sessions) {
   DOM.sessionList.innerHTML = '';
-  
+
   if (sessions.length === 0) {
-    DOM.sessionList.innerHTML = '<p class="text-secondary" style="padding: 1rem;">No sessions yet. Start studying!</p>';
+    DOM.sessionList.innerHTML =
+      '<p style="padding:1rem;color:var(--text-secondary)">No sessions yet. Start studying!</p>';
     return;
   }
 
-  // Show top 20 recent sessions
   sessions.slice(0, 20).forEach(s => {
+    const focusPct  = s.sessionTime > 0
+      ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
+    const totalDist = (s.distractions?.lookAway || 0) +
+                      (s.distractions?.away      || 0) +
+                      (s.distractions?.lidClosed || 0);
+    const endStr    = s.endTime ? formatTimestamp(s.endTime) : '?';
+
     const item = document.createElement('div');
     item.className = 'session-item';
-    item.style.display = 'flex';
-    item.style.justifyContent = 'space-between';
-    item.style.padding = '12px 16px';
-    item.style.borderBottom = '1px solid var(--border-color)';
-    
-    const date = new Date(s.startTime).toLocaleDateString();
-    const time = formatTimestamp(s.startTime);
-    const duration = formatDuration(s.studyTime);
-    
+    item.style.cssText = 'display:flex;justify-content:space-between;align-items:center;' +
+                         'padding:12px 16px;border-bottom:1px solid var(--border-color)';
     item.innerHTML = `
       <div>
-        <div style="font-weight: 500">${date} at ${time}</div>
-        <div style="font-size: 0.85rem; color: var(--text-secondary)">
-          Session: ${formatDuration(s.sessionTime)}
+        <div style="font-weight:500">
+          ${new Date(s.startTime).toLocaleDateString()}
+          &nbsp;– ${formatTimestamp(s.startTime)} – ${endStr}
+        </div>
+        <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px">
+          Focus ${focusPct}% &middot;
+          ${totalDist} distraction${totalDist !== 1 ? 's' : ''}
         </div>
       </div>
-      <div style="font-weight: 600; color: var(--primary-color)">
-        ${duration}
-      </div>
-    `;
+      <div style="font-weight:600;color:var(--primary-color);text-align:right">
+        <div>${formatDuration(s.studyTime)}</div>
+        <div style="font-size:0.8rem;font-weight:400;color:var(--text-secondary)">
+          of ${formatDuration(s.sessionTime)}
+        </div>
+      </div>`;
     DOM.sessionList.appendChild(item);
   });
 }
@@ -1970,7 +2191,7 @@ async function registerServiceWorker() {
       if (newWorker) {
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'activated') {
-            showToast('info', 'App updated', 'AI Spectator has been updated. Refresh for the latest version.');
+            showToast('info', 'App updated', 'Ayush_Tracker has been updated. Refresh for the latest version.');
           }
         });
       }
@@ -2007,7 +2228,7 @@ async function handleExportCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ai-spectator-data-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `ayush-tracker-data-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2045,14 +2266,21 @@ function attachEventListeners() {
   // Theme toggle
   DOM.themeToggle.addEventListener('click', toggleTheme);
 
-  // Tabs
-  DOM.tabTimer.addEventListener('click', () => switchTab('timer'));
-  DOM.tabDashboard.addEventListener('click', () => switchTab('dashboard'));
+  // Navigation / Tabs
+  if (DOM.navHome) DOM.navHome.addEventListener('click', () => switchTab('home'));
+  if (DOM.navHistory) DOM.navHistory.addEventListener('click', () => switchTab('history'));
+  if (DOM.navSettings) DOM.navSettings.addEventListener('click', openSettings);
+  if (DOM.tabTimer && DOM.tabTimer !== DOM.navHome) {
+    DOM.tabTimer.addEventListener('click', () => switchTab('timer'));
+  }
+  if (DOM.tabDashboard && DOM.tabDashboard !== DOM.navHistory) {
+    DOM.tabDashboard.addEventListener('click', () => switchTab('dashboard'));
+  }
 
   // Settings
-  DOM.settingsBtn.addEventListener('click', openSettings);
-  DOM.settingsCloseBtn.addEventListener('click', closeSettings);
-  DOM.settingsOverlay.addEventListener('click', closeSettings);
+  if (DOM.settingsBtn) DOM.settingsBtn.addEventListener('click', openSettings);
+  if (DOM.settingsCloseBtn) DOM.settingsCloseBtn.addEventListener('click', closeSettings);
+  if (DOM.settingsOverlay) DOM.settingsOverlay.addEventListener('click', closeSettings);
 
   // Live preview toggle
   DOM.livePreviewCb.addEventListener('change', (e) => {
@@ -2105,10 +2333,19 @@ function handleUserActivity() {
 // ═══════════════════════════════════════════════
 
 function init() {
-  console.log('🎯 AI Spectator — initialising...');
+  // Purge any old service worker caches immediately
+  if ('caches' in window) {
+    caches.keys().then((keys) => {
+      keys.forEach((k) => {
+        if (k !== 'ayush-tracker-v1') caches.delete(k);
+      });
+    });
+  }
 
-  // Init DB first
-  DB.init().catch(e => console.error(e));
+  DB.init()
+    .then(() => recoverUnfinishedSessions())
+    .then(() => refreshDashboard())
+    .catch(e => console.error('DB init error:', e));
 
   initTheme();
   loadSettings();
@@ -2118,15 +2355,19 @@ function init() {
   initPiP();
   attachEventListeners();
   registerServiceWorker();
-  refreshDashboard();
   DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
 
-  // Pre-load MediaPipe in the background so first "Start" is faster
-  loadMediaPipeModule().then((loaded) => {
-    if (loaded) console.log('MediaPipe pre-loaded and ready');
+  // Save when the tab is hidden or the window is about to close.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) autoSaveSession();
+  });
+  window.addEventListener('beforeunload', () => {
+    // synchronous best-effort: IndexedDB is async so this may not complete,
+    // but the recovery logic on next load will handle any dropped saves.
+    autoSaveSession();
   });
 
-  console.log('✅ AI Spectator — ready!');
+  loadMediaPipeModule();
 }
 
 if (document.readyState === 'loading') {

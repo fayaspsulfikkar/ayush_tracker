@@ -1,5 +1,5 @@
 /* ============================================
-   AI Spectator — Service Worker
+   Ayush_Tracker — Service Worker
    ============================================
    
    WHAT THIS DOES:
@@ -17,7 +17,7 @@
    When you update the app, bump CACHE_VERSION to force a refresh.
    ============================================ */
 
-const CACHE_VERSION = 'ai-spectator-v1';
+const CACHE_VERSION = 'ayush-tracker-v1';
 
 // List of files to pre-cache when the service worker installs.
 // These files will be available offline immediately after first load.
@@ -31,7 +31,10 @@ const FILES_TO_CACHE = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable.png',
-  // MediaPipe model files will be added in Step 2
+  './fonts/JetBrainsMono-Bold.woff2',
+  './fonts/Nunito-Regular.woff2',
+  './fonts/Nunito-SemiBold.woff2',
+  './fonts/Nunito-Bold.woff2',
 ];
 
 /**
@@ -40,7 +43,7 @@ const FILES_TO_CACHE = [
  * We open a cache and add all our app files to it.
  */
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker...');
+  console.log('[SW] Installing service worker v2...');
 
   event.waitUntil(
     caches.open(CACHE_VERSION)
@@ -61,7 +64,7 @@ self.addEventListener('install', (event) => {
  * We delete old caches so we don't waste storage.
  */
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker...');
+  console.log('[SW] Activating service worker v2...');
 
   event.waitUntil(
     caches.keys()
@@ -86,54 +89,52 @@ self.addEventListener('activate', (event) => {
  * FETCH EVENT
  * Intercepts every network request the app makes.
  * 
- * Strategy: Cache-first for our app files.
- * For external resources (like Google Fonts), use network-first
- * so they get cached after the first successful load.
+ * Strategy: Network-first for app files (so updates on localhost are immediate),
+ * with cache fallback for offline capability.
  */
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // For same-origin files (app.js, styles.css, index.html, etc.): Network-first with cache fallback
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
 
   // For Google Fonts (CSS and font files): network-first with cache fallback
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          // Clone the response because we need to use it twice:
-          // once to cache it, once to return it
           const responseClone = response.clone();
           caches.open(CACHE_VERSION).then((cache) => {
             cache.put(event.request, responseClone);
           });
           return response;
         })
-        .catch(() => {
-          // Network failed — try cache
-          return caches.match(event.request);
-        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }
 
-  // For everything else: cache-first with network fallback
+  // Fallback for any other external requests: cache first, then network
   event.respondWith(
     caches.match(event.request)
       .then((cachedResponse) => {
-        if (cachedResponse) {
-          return cachedResponse;
-        }
-
-        // Not in cache — fetch from network
-        return fetch(event.request)
-          .then((response) => {
-            // Only cache successful responses from our origin
-            if (response.ok && url.origin === self.location.origin) {
-              const responseClone = response.clone();
-              caches.open(CACHE_VERSION).then((cache) => {
-                cache.put(event.request, responseClone);
-              });
-            }
-            return response;
-          });
+        if (cachedResponse) return cachedResponse;
+        return fetch(event.request);
       })
   );
 });

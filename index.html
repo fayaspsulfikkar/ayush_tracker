@@ -4,10 +4,10 @@
   <!-- ====== Meta ====== -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="AI Spectator — Track your real study time using webcam focus detection. Timer runs only while you face the screen.">
+  <meta name="description" content="Ayush_Tracker — Track your real study time using webcam focus detection. Timer runs only while you face the screen.">
   <meta name="theme-color" content="#7c3aed">
 
-  <title>AI Spectator — Study Time Tracker</title>
+  <title>Ayush_Tracker — Study Time Tracker</title>
 
   <!-- ====== PWA ====== -->
   <link rel="manifest" href="manifest.webmanifest">
@@ -27,7 +27,7 @@
       <div class="modal-icon">🔒</div>
       <h2 id="privacy-title" class="modal-title">Your privacy matters</h2>
       <div class="modal-text">
-        <p>AI Spectator uses your webcam to detect if you're facing the screen. Here's what you should know:</p>
+        <p>Ayush_Tracker uses your webcam to detect if you're facing the screen. Here's what you should know:</p>
         <ul>
           <li>Video is <strong>never recorded, saved, or sent anywhere</strong></li>
           <li>Frames are analysed live in your browser, then thrown away</li>
@@ -67,9 +67,16 @@
     <!-- ====== Header ====== -->
     <header class="app-header">
       <div class="logo">
-        <img src="icons/icon-192.png" alt="AI Spectator" class="logo-icon">
-        <span class="logo-text">AI Spectator</span>
+        <img src="icons/icon-192.png" alt="Ayush_Tracker" class="logo-icon">
+        <span class="logo-text">Ayush_Tracker</span>
       </div>
+
+      <!-- Navigation: Home / History / Settings -->
+      <nav class="app-nav" aria-label="Main navigation">
+        <button id="nav-home" class="nav-btn active" data-tab="home" aria-selected="true">Home</button>
+        <button id="nav-history" class="nav-btn" data-tab="history" aria-selected="false">History</button>
+        <button id="nav-settings" class="nav-btn" aria-label="Open settings">Settings</button>
+      </nav>
 
       <div class="header-controls">
         <!-- Camera on indicator -->
@@ -87,11 +94,6 @@
         <button id="theme-toggle" class="header-btn" title="Toggle theme" aria-label="Toggle light/dark theme">
           🌙
         </button>
-
-        <!-- Settings -->
-        <button id="settings-btn" class="header-btn" title="Settings" aria-label="Open settings">
-          ⚙️
-        </button>
       </div>
     </header>
 
@@ -102,135 +104,187 @@
       <div id="install-prompt" class="install-prompt">
         <span>📲</span>
         <span class="install-prompt-text">
-          <strong>Install AI Spectator</strong> as a desktop app for the best experience.
+          <strong>Install Ayush_Tracker</strong> as a desktop app for the best experience.
         </span>
         <button id="install-btn" class="btn btn-primary btn-sm">Install</button>
         <button id="install-dismiss-btn" class="btn btn-ghost btn-sm">Later</button>
       </div>
 
-      <!-- Tab bar -->
-      <nav class="tab-bar" aria-label="Main navigation">
-        <button id="tab-timer" class="tab-btn active" data-tab="timer" aria-selected="true">⏱ Timer</button>
-        <button id="tab-dashboard" class="tab-btn" data-tab="dashboard" aria-selected="false">📊 Dashboard</button>
-      </nav>
+      <!-- ============ HOME / TRACKER VIEW ============ -->
+      <section id="home-view" class="home-view" aria-label="Study tracker and dashboard">
 
-      <!-- ============ TIMER VIEW ============ -->
-      <section id="timer-view" class="timer-view" aria-label="Study timer">
+        <!-- Row 1: Hero card (~60%) and Live tracking card (~40%) -->
+        <div class="hero-tracking-grid">
 
-        <!-- Status chip -->
-        <div id="status-chip" class="status-chip" data-status="idle">
-          <span class="status-dot"></span>
-          <span id="status-text">Ready to study</span>
-        </div>
-
-        <!-- Big timer display -->
-        <div id="timer-display" class="timer-display" aria-live="polite">
-          00:00:00
-        </div>
-
-        <!-- Session quick stats -->
-        <div id="session-stats" class="session-stats">
-          <div class="stat-mini">
-            <span id="stat-focus" class="stat-mini-value">100%</span>
-            <span class="stat-mini-label">Focus</span>
-          </div>
-          <div class="stat-mini">
-            <span id="stat-distractions" class="stat-mini-value">0</span>
-            <span class="stat-mini-label">Distractions</span>
-          </div>
-          <div class="stat-mini">
-            <span id="stat-session-time" class="stat-mini-value">0m</span>
-            <span class="stat-mini-label">Session</span>
-          </div>
-        </div>
-
-        <!-- Timer controls -->
-        <div class="timer-controls">
-          <button id="start-btn" class="btn btn-primary btn-lg">
-            <span class="btn-icon">▶</span> Start Studying
-          </button>
-          <button id="end-btn" class="btn btn-danger btn-lg hidden">
-            <span class="btn-icon">■</span> End Session
-          </button>
-        </div>
-
-        <!-- Camera preview (hidden by default) -->
-        <div id="camera-preview-container" class="camera-preview-container">
-          <video id="camera-preview" autoplay playsinline muted></video>
-          <span class="camera-preview-label">Preview • not recorded</span>
-        </div>
-
-        <!-- Alert display area -->
-        <div class="alert-display">
-          <div id="alert-card" class="alert-card">
-            <span id="alert-icon" class="alert-icon"></span>
-            <span id="alert-text" class="alert-text"></span>
-          </div>
-        </div>
-
-        <!-- ============ LIVE STATUS PANEL ============ -->
-        <div id="live-panel" class="card" style="margin-top: 2rem; border-color: var(--primary-color);">
-          <div class="card-header">
-            <span class="card-title">Live Status Panel</span>
-          </div>
-          <div style="padding: 1rem;">
-            <!-- Big Status Chip -->
-            <div id="live-status-chip" class="status-chip" data-status="idle" style="font-size: 1.2rem; padding: 12px 24px; margin-bottom: 1rem;">
+          <!-- Hero card (most important) -->
+          <div class="card hero-card" id="hero-card">
+            <div id="status-chip" class="status-chip" data-status="idle">
               <span class="status-dot"></span>
-              <span id="live-status-text">Idle</span>
+              <span id="status-text">Ready to study</span>
             </div>
 
-            <!-- Pipeline Checklist -->
-            <div class="settings-section-title">Pipeline</div>
-            <ul id="live-pipeline" style="list-style: none; padding: 0; margin: 0 0 1rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-              <li id="pipe-cam">❌ Camera</li>
-              <li id="pipe-model">❌ Model Loaded</li>
-              <li id="pipe-face">❌ Face Detected</li>
-              <li id="pipe-worker">❌ Heartbeat</li>
-            </ul>
-
-            <!-- Live Numbers -->
-            <div class="settings-section-title">Metrics</div>
-            <div id="live-metrics" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-family: monospace; font-size: 0.9rem; margin-bottom: 1rem; color: var(--text-secondary);">
-              <div>Yaw: <span id="live-yaw">0</span>°</div>
-              <div>Pitch: <span id="live-pitch">0</span>°</div>
-              <div>Detect FPS: <span id="live-fps">0</span></div>
-              <div>Since face: <span id="live-since-face">0</span>s</div>
-              <div>Session: <span id="live-session">0</span>s</div>
-              <div>Study: <span id="live-study">0</span>s</div>
-              <div>Pauses: <span id="live-pauses">0</span></div>
+            <div id="timer-display" class="timer-display" aria-live="polite">
+              00:00:00
             </div>
 
-            <!-- Camera Preview & Canvas Overlay -->
-            <div style="margin-bottom: 1rem;">
-              <label class="toggle">
-                <input id="live-preview-cb" type="checkbox">
-                <span class="toggle-slider"></span>
-                <span style="margin-left: 8px;">Show Camera with Face Box</span>
-              </label>
-              <div id="live-camera-wrapper" style="display: none; position: relative; margin-top: 1rem; width: 100%; max-width: 400px; border-radius: 8px; overflow: hidden; background: #000;">
-                <video id="live-video" autoplay playsinline muted style="width: 100%; display: block;"></video>
-                <canvas id="live-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></canvas>
+            <!-- Under the timer, smaller Session time and Paused time -->
+            <div class="hero-subtimes">
+              <div class="hero-subtime-item">
+                <span class="subtime-label">Session time:</span>
+                <span id="stat-session-time" class="subtime-value">00:00:00</span>
+              </div>
+              <span class="hero-subtime-sep">•</span>
+              <div class="hero-subtime-item">
+                <span class="subtime-label">Paused time:</span>
+                <span id="stat-paused-time" class="subtime-value">00:00:00</span>
               </div>
             </div>
 
-            <!-- Error Banner -->
-            <div id="live-error-banner" class="alert-card hidden" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); margin-bottom: 1rem;">
-              <span class="alert-icon">❌</span>
-              <span id="live-error-text" class="alert-text">Error goes here</span>
+            <!-- Start and End buttons -->
+            <div class="timer-controls">
+              <button id="start-btn" class="btn btn-primary btn-lg">
+                <span class="btn-icon">▶</span> Start Studying
+              </button>
+              <button id="end-btn" class="btn btn-danger btn-lg hidden">
+                <span class="btn-icon">■</span> End Session
+              </button>
             </div>
 
-            <!-- Event Log -->
-            <div class="settings-section-title">Event Log</div>
-            <ul id="live-events" style="list-style: none; padding: 0; margin: 0; font-family: monospace; font-size: 0.85rem; max-height: 150px; overflow-y: auto; color: var(--text-secondary);">
+            <!-- Alert notification box for nudges -->
+            <div class="alert-display">
+              <div id="alert-card" class="alert-card">
+                <span id="alert-icon" class="alert-icon"></span>
+                <span id="alert-text" class="alert-text"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live tracking card next to the hero -->
+          <div class="card live-tracking-card" id="live-panel">
+            <div class="card-header">
+              <span class="card-title">Live Tracking</span>
+              <div id="live-status-chip" class="status-chip status-chip-sm" data-status="idle">
+                <span class="status-dot"></span>
+                <span id="live-status-text">Idle</span>
+              </div>
+            </div>
+
+            <div class="live-card-body">
+              <!-- Pipeline checklist -->
+              <div class="live-section">
+                <div class="live-section-title">Pipeline</div>
+                <ul id="live-pipeline" class="pipeline-checklist">
+                  <li id="pipe-cam" class="pipe-item">❌ Camera</li>
+                  <li id="pipe-model" class="pipe-item">❌ Model Loaded</li>
+                  <li id="pipe-face" class="pipe-item">❌ Face Detected</li>
+                  <li id="pipe-worker" class="pipe-item">❌ Heartbeat</li>
+                </ul>
+              </div>
+
+              <!-- Live numbers -->
+              <div class="live-section">
+                <div class="live-section-title">Metrics</div>
+                <div id="live-metrics" class="metrics-grid">
+                  <div class="metric-box">
+                    <span class="metric-name">Yaw</span>
+                    <span class="metric-val"><strong id="live-yaw">0</strong>°</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-name">Pitch</span>
+                    <span class="metric-val"><strong id="live-pitch">0</strong>°</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-name">FPS</span>
+                    <span class="metric-val"><strong id="live-fps">0</strong></span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-name">Since face</span>
+                    <span class="metric-val"><strong id="live-since-face">0</strong>s</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Camera preview toggle with face box -->
+              <div class="preview-toggle-row">
+                <label class="toggle" for="live-preview-cb">
+                  <input id="live-preview-cb" type="checkbox">
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="live-preview-cb" class="toggle-label">Show Camera with Face Box</label>
+              </div>
+
+              <div id="live-camera-wrapper" class="live-camera-box" style="display: none;">
+                <video id="live-video" autoplay playsinline muted></video>
+                <canvas id="live-canvas"></canvas>
+              </div>
+
+              <!-- Error Banner -->
+              <div id="live-error-banner" class="alert-card hidden">
+                <span class="alert-icon">❌</span>
+                <span id="live-error-text" class="alert-text">Error goes here</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Row 2: Row of 3 small summary cards -->
+        <div class="summary-cards-row">
+          <div class="card mini-summary-card">
+            <div class="mini-summary-label">Today's Study Time</div>
+            <div id="home-study-time" class="mini-summary-val accent">0h 0m</div>
+          </div>
+          <div class="card mini-summary-card">
+            <div class="mini-summary-label">Focus</div>
+            <div id="home-focus" class="mini-summary-val success">100%</div>
+          </div>
+          <div class="card mini-summary-card">
+            <div class="mini-summary-label">Distractions</div>
+            <div id="home-distractions" class="mini-summary-val warning">0</div>
+          </div>
+        </div>
+
+        <!-- Row 3: Daily goal progress and streak -->
+        <div class="card goal-streak-card">
+          <div class="goal-streak-top">
+            <div class="goal-title-group">
+              <span class="goal-heading">Daily Goal Progress</span>
+              <span id="goal-progress-text" class="goal-progress-sub">0h of 4h (0%)</span>
+            </div>
+            <div id="home-streak-badge" class="streak-badge">🔥 0 Day Streak</div>
+          </div>
+          <div class="goal-track">
+            <div id="goal-progress-bar" class="goal-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Row 4: Recent events (last 5) and recent sessions (last 3) -->
+        <div class="recent-columns-grid">
+          <div class="card recent-card">
+            <div class="card-header">
+              <span class="card-title">Recent Events</span>
+              <span class="recent-sub">Last 5</span>
+            </div>
+            <ul id="home-recent-events" class="recent-events-list">
+              <li class="empty-recent-item">No events recorded yet</li>
             </ul>
+          </div>
+
+          <div class="card recent-card">
+            <div class="card-header">
+              <span class="card-title">Recent Sessions</span>
+              <span class="recent-sub">Last 3</span>
+            </div>
+            <div id="home-recent-sessions" class="recent-sessions-list">
+              <div class="empty-recent-item">No sessions completed yet</div>
+            </div>
           </div>
         </div>
 
       </section>
 
-      <!-- ============ DASHBOARD VIEW ============ -->
-      <section id="dashboard-view" class="dashboard-view hidden" aria-label="Study dashboard">
+      <!-- ============ HISTORY VIEW ============ -->
+      <section id="history-view" class="dashboard-view hidden" aria-label="Study dashboard">
 
         <!-- Today's stats -->
         <div class="stats-row">

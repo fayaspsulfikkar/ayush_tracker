@@ -1,5 +1,5 @@
 /* ============================================
-   AI Spectator — Stylesheet
+   Ayush_Tracker — Stylesheet
    Study-time tracker with webcam focus detection
    
    TABLE OF CONTENTS
@@ -26,6 +26,38 @@
 
 /* ---------- 1. Fonts & Reset ---------- */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('fonts/Nunito-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('fonts/Nunito-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('fonts/Nunito-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 *,
 *::before,
@@ -94,7 +126,7 @@ html {
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Inter', 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
   --ease-out: cubic-bezier(0.0, 0.0, 0.2, 1);
@@ -280,28 +312,25 @@ a {
   flex: 1;
   display: flex;
   flex-direction: column;
-  max-width: 720px;
+  max-width: 1040px;
   width: 100%;
   margin: 0 auto;
-  padding: 24px 20px 100px;
+  padding: 20px 20px 60px;
 }
 
-/* ---------- 5. Tab Bar ---------- */
-.tab-bar {
+/* ---------- 5. Header Navigation ---------- */
+.app-nav {
   display: flex;
+  align-items: center;
   gap: 4px;
+  background: var(--bg-input);
   padding: 4px;
-  background: var(--bg-card);
-  backdrop-filter: blur(12px);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  margin-bottom: 28px;
-  width: fit-content;
-  align-self: center;
 }
 
-.tab-btn {
-  padding: 8px 24px;
+.nav-btn {
+  padding: 6px 18px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -311,30 +340,392 @@ a {
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
-  position: relative;
 }
 
-.tab-btn:hover {
+.nav-btn:hover {
   color: var(--text-primary);
 }
 
-.tab-btn.active {
+.nav-btn.active {
   background: var(--accent);
   color: #fff;
   box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.3);
 }
 
-/* ---------- 6. Timer Display ---------- */
-.timer-view {
+/* View containers */
+.home-view,
+.history-view,
+.timer-view,
+.dashboard-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.home-view.hidden,
+.history-view.hidden,
+.timer-view.hidden,
+.dashboard-view.hidden {
+  display: none !important;
+}
+
+/* ---------- 6. Hero & Live Tracking Grid (Desktop 60% / 40%) ---------- */
+.hero-tracking-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+@media (max-width: 860px) {
+  .hero-tracking-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Hero card */
+.card.hero-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  justify-content: space-between;
+  text-align: center;
+  padding: 24px;
+  min-height: 330px;
+  box-sizing: border-box;
 }
 
-.timer-view.hidden,
-.dashboard-view.hidden {
-  display: none;
+.hero-card .timer-display {
+  font-size: 3.8rem;
+  line-height: 1.1;
+  padding: 6px 0;
+}
+
+.hero-subtimes {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.hero-subtime-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.hero-subtime-item .subtime-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hero-subtime-sep {
+  color: var(--text-muted);
+}
+
+/* Live tracking card */
+.card.live-tracking-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 24px;
+  min-height: 330px;
+  box-sizing: border-box;
+}
+
+.live-tracking-card .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.status-chip-sm {
+  padding: 3px 10px !important;
+  font-size: 0.72rem !important;
+}
+
+.live-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  justify-content: space-between;
+}
+
+.live-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.live-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.pipeline-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pipe-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.2;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metric-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.metric-name {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.metric-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.toggle-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.live-camera-box {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  max-height: 120px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #000;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+}
+
+.live-camera-box video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.live-camera-box canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ---------- 7. Summary Cards Row ---------- */
+.summary-cards-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 600px) {
+  .summary-cards-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mini-summary-card {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mini-summary-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mini-summary-val {
+  font-size: 1.45rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1.2;
+}
+
+.mini-summary-val.accent { color: var(--accent); }
+.mini-summary-val.success { color: var(--success); }
+.mini-summary-val.warning { color: var(--warning); }
+
+/* ---------- 8. Daily Goal Progress & Streak ---------- */
+.goal-streak-card {
+  padding: 16px 20px;
+}
+
+.goal-streak-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.goal-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.goal-heading {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.goal-progress-sub {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.goal-track {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-input);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.goal-fill {
+  height: 100%;
+  background: var(--accent-gradient);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-normal);
+}
+
+/* ---------- 9. Recent Events & Recent Sessions ---------- */
+.recent-columns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .recent-columns-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.recent-card {
+  padding: 16px 18px;
+}
+
+.recent-sub {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.recent-events-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-events-list li {
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+}
+
+.recent-sessions-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recent-session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  font-size: 0.84rem;
+}
+
+.recent-session-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-session-date {
+  font-weight: 500;
+}
+
+.recent-session-meta {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.recent-session-dur {
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.empty-recent-item {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 8px 0;
 }
 
 /* Status chip */
