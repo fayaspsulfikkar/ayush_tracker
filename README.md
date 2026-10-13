@@ -1,4 +1,8 @@
-# Ayush_Tracker 👁️
+<p align="center">
+  <img src="icons/icon-192.png" alt="Ayush_Tracker Logo" width="128" height="128" />
+</p>
+
+<h1 align="center">Ayush_Tracker</h1>
 
 [![CI](https://github.com/fayaspsulfikkar/ayush_tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/fayaspsulfikkar/ayush_tracker/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)

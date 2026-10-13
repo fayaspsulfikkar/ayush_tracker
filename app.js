@@ -3076,7 +3076,7 @@ function init() {
   if ('caches' in window) {
     caches.keys().then((keys) => {
       keys.forEach((k) => {
-        if (k !== 'ayush-tracker-v1') caches.delete(k);
+        if (k !== 'ayush-tracker-v2') caches.delete(k);
       });
     });
   }
