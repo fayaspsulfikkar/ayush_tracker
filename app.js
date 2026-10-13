@@ -235,18 +235,22 @@ const state = {
     facingScreenSince: 0,      // when the user started facing the screen again
   },
 
-  // ── Session data ──
+  // ── Session data (Daily Cumulative) ──
   session: {
     active: false,
-    id: null,                  // unique id, set on Start so autosave can upsert
+    id: null,                  // 'day_' + dateStr (e.g. 'day_2026-10-13')
+    dateStr: null,             // 'YYYY-MM-DD'
     startTime: null,
     studyStartedAt: null,      // wall-clock ms when the current study run began (null when paused)
-    accStudyMs: 0,             // study ms accumulated across all completed runs
-    studyTime: 0,              // total study ms = accStudyMs + (now − studyStartedAt) live
-    sessionTime: 0,
+    sessionStartedAt: null,    // wall-clock ms when current tracking segment began
+    accStudyMs: 0,             // study ms accumulated for today before current active run
+    accSessionMs: 0,           // tracking ms accumulated for today before current segment
+    studyTime: 0,              // total study ms today
+    sessionTime: 0,            // total active tracking ms today
     unverifiedTime: 0,
     distractions: { lookAway: 0, away: 0, lidClosed: 0 },
     pauses: [],                // [{ type, start, end }]
+    lastSaved: null,
   },
 
   // ── Worker ──
@@ -626,6 +630,22 @@ function formatTimestamp(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+/** Return local date string formatted as YYYY-MM-DD */
+function getLocalDateString(timestamp = Date.now()) {
+  const d = new Date(timestamp);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/** Update the Start button label based on accumulated time today */
+function updateStartButtonLabel() {
+  if (!DOM.startBtn) return;
+  const hasTime = (state.session.studyTime || state.session.accStudyMs || 0) > 0;
+  DOM.startBtn.innerHTML = `<span class="btn-icon">▶</span> ${hasTime ? 'Continue Studying' : 'Start Studying'}`;
+}
+
 
 // ═══════════════════════════════════════════════
 // 12. STATUS DISPLAY
@@ -636,7 +656,8 @@ function setStatus(status, text) {
   DOM.statusChip.setAttribute('data-status', status);
 
   const defaultTexts = {
-    'idle':          'Ready to study',
+    'idle':          (state.session && (state.session.studyTime || state.session.accStudyMs || 0) > 0)
+                       ? 'Ready to continue' : 'Ready to study',
     'calibrating':   'Calibrating…',
     'studying':      'Studying',
     'looking-away':  'Paused: looking away',
@@ -1559,6 +1580,7 @@ function freezeStudyTime(pauseAt) {
   s.accStudyMs += Math.max(0, pauseAt - s.studyStartedAt);
   s.studyTime = s.accStudyMs;
   s.studyStartedAt = null;
+  saveTodayToLocalStorage();
 }
 
 function resumeStudyTime(resumeAt) {
@@ -1659,6 +1681,14 @@ function handleTick(data) {
   
   updatePipeline('Worker', true);
 
+  // ── Detect midnight rollover ──
+  // If calendar day changed while tracking, rollover to fresh day
+  const currentDayStr = getLocalDateString(now);
+  if (state.session.active && state.session.dateStr && state.session.dateStr !== currentDayStr) {
+    handleMidnightRollover(now, currentDayStr);
+    return;
+  }
+
   // ── Detect lid close via heartbeat gap ──
   // A gap much bigger than 1 s means the laptop was asleep or the lid was closed.
   if (gap > CONFIG.lidGapMs && state.session.active && state.status !== 'idle') {
@@ -1689,7 +1719,9 @@ function handleTick(data) {
 
   // ── Update timer display ──
   if (state.session.active) {
-    state.session.sessionTime = now - state.session.startTime;
+    if (state.session.sessionStartedAt) {
+      state.session.sessionTime = (state.session.accSessionMs || 0) + Math.max(0, now - state.session.sessionStartedAt);
+    }
 
     // Recompute studyTime from the wall-clock anchor so there is one source of truth.
     if (state.status === 'studying' && state.session.studyStartedAt !== null) {
@@ -1710,6 +1742,7 @@ function handleTick(data) {
     DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
     updateSessionStatsDisplay();
     updatePiP();
+    saveTodayToLocalStorage();
 
     if (DOM.liveSession) DOM.liveSession.textContent = Math.round(state.session.sessionTime / 1000);
     if (DOM.liveStudy) DOM.liveStudy.textContent   = Math.round(state.session.studyTime   / 1000);
@@ -1720,6 +1753,77 @@ function handleTick(data) {
   }
 
   state.lastTickTimestamp = now;
+}
+
+/**
+ * Handle day boundary crossing at midnight.
+ * Saves yesterday's learned time to its daily record, then starts
+ * today's fresh counter for the new day.
+ */
+function handleMidnightRollover(now, newDateStr) {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  const boundaryTime = d.getTime();
+
+  // 1. Finalize yesterday's portion
+  if (state.status === 'studying' && state.session.studyStartedAt !== null) {
+    const yesterdayStudy = Math.max(0, boundaryTime - state.session.studyStartedAt);
+    state.session.accStudyMs += yesterdayStudy;
+    state.session.studyTime = state.session.accStudyMs;
+  }
+  if (state.session.sessionStartedAt) {
+    const yesterdaySession = Math.max(0, boundaryTime - state.session.sessionStartedAt);
+    state.session.sessionTime = (state.session.accSessionMs || 0) + yesterdaySession;
+  }
+  state.session.endTime = boundaryTime;
+  state.session.lastSaved = boundaryTime;
+
+  const yesterdayRecord = {
+    id: state.session.id,
+    date: state.session.dateStr,
+    startTime: state.session.startTime || boundaryTime,
+    endTime: boundaryTime,
+    studyTime: state.session.studyTime,
+    sessionTime: state.session.sessionTime,
+    pausedTime: Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0)),
+    unverifiedTime: state.session.unverifiedTime || 0,
+    distractions: { ...state.session.distractions },
+    pauses: [...(state.session.pauses || [])],
+    lastSaved: boundaryTime,
+  };
+
+  DB.saveSession(yesterdayRecord).catch(e => console.warn('Could not archive yesterday record:', e));
+
+  // 2. Initialize new day's record starting from 00:00:00
+  const isStudying = state.status === 'studying';
+  const todayStudy = isStudying ? Math.max(0, now - boundaryTime) : 0;
+  const todaySession = Math.max(0, now - boundaryTime);
+
+  state.session = {
+    active: true,
+    id: 'day_' + newDateStr,
+    dateStr: newDateStr,
+    startTime: boundaryTime,
+    sessionStartedAt: boundaryTime,
+    studyStartedAt: isStudying ? boundaryTime : null,
+    accStudyMs: 0,
+    accSessionMs: 0,
+    studyTime: todayStudy,
+    sessionTime: todaySession,
+    unverifiedTime: 0,
+    distractions: { lookAway: 0, away: 0, lidClosed: 0 },
+    pauses: [],
+    lastSaved: now,
+  };
+
+  DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+  updateSessionStatsDisplay();
+  saveTodayToLocalStorage();
+  autoSaveSession();
+  refreshDashboard();
+
+  showToast('info', 'New Day Started 🌅',
+    'Yesterday\'s study time has been saved. Today\'s timer reset to 00:00:00.');
 }
 
 
@@ -1742,7 +1846,7 @@ async function handleStart() {
     const landmarkerReady = await initFaceLandmarker();
     if (!landmarkerReady) {
       DOM.startBtn.disabled = false;
-      DOM.startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Studying';
+      updateStartButtonLabel();
       return;
     }
   }
@@ -1751,7 +1855,7 @@ async function handleStart() {
   const cameraReady = await startCamera();
   if (!cameraReady) {
     DOM.startBtn.disabled = false;
-    DOM.startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Studying';
+    updateStartButtonLabel();
     return;
   }
 
@@ -1764,25 +1868,43 @@ async function handleStart() {
     stopDetectionLoop();
     stopCamera();
     DOM.startBtn.disabled = false;
-    DOM.startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Studying';
+    updateStartButtonLabel();
     return;
   }
 
   startWorker();
 
   const now = Date.now();
-  state.session = {
-    active: true,
-    id: 'sess_' + now,         // stable id so every autosave upserts the same row
-    startTime: now,
-    studyStartedAt: now,
-    accStudyMs: 0,
-    studyTime: 0,
-    sessionTime: 0,
-    unverifiedTime: 0,
-    distractions: { lookAway: 0, away: 0, lidClosed: 0 },
-    pauses: [],
-  };
+  const dateStr = getLocalDateString(now);
+  const dayId = 'day_' + dateStr;
+
+  // If calendar day changed since last run, reset
+  if (state.session.dateStr && state.session.dateStr !== dateStr) {
+    state.session.accStudyMs = 0;
+    state.session.studyTime = 0;
+    state.session.accSessionMs = 0;
+    state.session.sessionTime = 0;
+  }
+
+  const baseStudyMs = state.session.studyTime || state.session.accStudyMs || 0;
+  const baseSessionMs = state.session.sessionTime || state.session.accSessionMs || 0;
+
+  state.session.active = true;
+  state.session.id = dayId;
+  state.session.dateStr = dateStr;
+  state.session.startTime = state.session.startTime || now;
+  state.session.studyStartedAt = now;
+  state.session.sessionStartedAt = now;
+  state.session.accStudyMs = baseStudyMs;
+  state.session.accSessionMs = baseSessionMs;
+  state.session.studyTime = baseStudyMs;
+  state.session.sessionTime = baseSessionMs;
+  if (!state.session.distractions) {
+    state.session.distractions = { lookAway: 0, away: 0, lidClosed: 0 };
+  }
+  if (!state.session.pauses) {
+    state.session.pauses = [];
+  }
 
   state.headPose.lookAwayStart = 0;
   state.headPose.awayStart = 0;
@@ -1791,19 +1913,21 @@ async function handleStart() {
   DOM.startBtn.classList.add('hidden');
   DOM.endBtn.classList.remove('hidden');
   if (DOM.sessionStats) DOM.sessionStats.classList.add('visible');
-  DOM.timerDisplay.textContent = '00:00:00';
-  if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
-  if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+  DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
+  const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0));
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
   setStatus('studying');
   hideAlert();
 
   DOM.startBtn.disabled = false;
-  DOM.startBtn.innerHTML = '<span class="btn-icon">▶</span> Start Studying';
+  updateStartButtonLabel();
 
-  // First save creates the row immediately so recovery can find it.
+  // Save current progress immediately to localStorage & IndexedDB
+  saveTodayToLocalStorage();
   await autoSaveSession();
 
-  // Autosave every 15 seconds while a session is active.
+  // Autosave every 15 seconds while a session is active
   state.autoSaveInterval = setInterval(autoSaveSession, 15000);
 }
 
@@ -1823,22 +1947,32 @@ function handleEnd() {
   // Close any open pause event.
   endPauseEvent(endTime);
 
+  if (state.session.sessionStartedAt) {
+    const elapsedSession = Math.max(0, endTime - state.session.sessionStartedAt);
+    state.session.sessionTime = (state.session.accSessionMs || 0) + elapsedSession;
+    state.session.accSessionMs = state.session.sessionTime;
+    state.session.sessionStartedAt = null;
+  }
+
   const finalStudyTime  = state.session.studyTime;
-  const finalSessionTime = endTime - state.session.startTime;
+  const finalSessionTime = state.session.sessionTime;
+  const pausedTime = Math.max(0, finalSessionTime - finalStudyTime - (state.session.unverifiedTime || 0));
 
   DOM.startBtn.classList.remove('hidden');
   DOM.endBtn.classList.add('hidden');
   if (DOM.sessionStats) DOM.sessionStats.classList.remove('visible');
-  if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
-  if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(finalSessionTime);
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedTime);
   DOM.timerDisplay.textContent = formatTime(finalStudyTime);
   setStatus('idle');
   hideAlert();
+  updateStartButtonLabel();
 
-  showToast('info', 'Session ended',
-    `You studied for ${formatDuration(finalStudyTime)}. Great work! 🎉`);
+  showToast('info', 'Session saved',
+    `Today's total learned time: ${formatDuration(finalStudyTime)}. Ready to continue whenever you are! 🎉`);
 
   // Final save with endTime set.
+  saveTodayToLocalStorage();
   const record = buildSessionRecord(endTime);
   DB.saveSession(record)
     .then(() => refreshDashboard())
@@ -1850,75 +1984,157 @@ function handleEnd() {
 // ═══════════════════════════════════════════════
 
 /**
- * Build a plain-object record from live session state.
- * @param {number|null} endTime — if set, this is the final save.
+ * Build a plain-object record from live session state for today.
+ * @param {number|null} endTime — if set, timestamp when paused or stopped.
  */
 function buildSessionRecord(endTime = null) {
   const s = state.session;
   const now = endTime || Date.now();
+  const dateStr = s.dateStr || getLocalDateString(now);
 
-  // Compute live studyTime if we are currently studying.
-  let studyTime = s.accStudyMs;
-  if (s.studyStartedAt !== null) {
+  let studyTime = s.accStudyMs || 0;
+  if (s.active && state.status === 'studying' && s.studyStartedAt !== null) {
     studyTime += Math.max(0, now - s.studyStartedAt);
+  } else {
+    studyTime = s.studyTime || s.accStudyMs || 0;
   }
-  const sessionTime = s.startTime ? now - s.startTime : 0;
-  const pausedTime  = Math.max(0, sessionTime - studyTime - s.unverifiedTime);
+
+  const currentSegment = (s.active && s.sessionStartedAt) ? Math.max(0, now - s.sessionStartedAt) : 0;
+  const sessionTime = (s.accSessionMs || 0) + currentSegment;
+  const pausedTime = Math.max(0, sessionTime - studyTime - (s.unverifiedTime || 0));
 
   return {
-    id:            s.id,
-    startTime:     s.startTime,
-    endTime:       endTime,          // null means unfinished
+    id:            s.id || ('day_' + dateStr),
+    date:          dateStr,
+    startTime:     s.startTime || now,
+    endTime:       endTime,          // null means active / ongoing today
     studyTime,
     sessionTime,
     pausedTime,
-    unverifiedTime: s.unverifiedTime,
-    distractions:  { ...s.distractions },
-    pauses:        s.pauses.map(p => ({ ...p })),
+    unverifiedTime: s.unverifiedTime || 0,
+    distractions:  { ...(s.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
+    pauses:        Array.isArray(s.pauses) ? s.pauses.map(p => ({ ...p })) : [],
     lastSaved:     Date.now(),
   };
 }
 
 /**
- * Upsert the live session into IndexedDB.
- * Shows a toast if storage fails so errors are never silent.
+ * Synchronously persist today's state into localStorage so restarts,
+ * reloads, or sudden browser exits never lose a single second.
  */
-async function autoSaveSession() {
-  if (!state.session.active) return;
+function saveTodayToLocalStorage() {
   try {
-    await DB.saveSession(buildSessionRecord());
+    const record = buildSessionRecord();
+    localStorage.setItem('ayush_tracker_today', JSON.stringify(record));
+    return record;
   } catch (e) {
-    showToast('error', 'Auto-save failed',
-      'Could not save your session to storage. ' + (e?.message || e));
+    return null;
   }
 }
 
 /**
- * On startup, find sessions that have no endTime (the app was closed
- * mid-session). Close them at their lastSaved timestamp so they appear
- * in the history with accurate data rather than disappearing.
+ * Synchronously load today's accumulated progress on startup.
+ */
+function loadTodayState() {
+  const todayStr = getLocalDateString();
+  let loaded = false;
+
+  try {
+    const raw = localStorage.getItem('ayush_tracker_today');
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && data.date === todayStr) {
+        state.session.id = data.id || ('day_' + todayStr);
+        state.session.dateStr = todayStr;
+        state.session.startTime = data.startTime || Date.now();
+        state.session.accStudyMs = data.studyTime || 0;
+        state.session.studyTime = data.studyTime || 0;
+        state.session.accSessionMs = data.sessionTime || 0;
+        state.session.sessionTime = data.sessionTime || 0;
+        state.session.unverifiedTime = data.unverifiedTime || 0;
+        state.session.distractions = data.distractions || { lookAway: 0, away: 0, lidClosed: 0 };
+        state.session.pauses = data.pauses || [];
+        state.session.lastSaved = data.lastSaved || Date.now();
+
+        DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+        if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
+        const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - state.session.unverifiedTime);
+        if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
+        updateStartButtonLabel();
+        updateSessionStatsDisplay();
+        loaded = true;
+      } else {
+        // From an earlier day: purge today cache
+        localStorage.removeItem('ayush_tracker_today');
+      }
+    }
+  } catch (e) {
+    console.warn('LocalStorage load error:', e);
+  }
+
+  if (!loaded) {
+    state.session.id = 'day_' + todayStr;
+    state.session.dateStr = todayStr;
+    state.session.accStudyMs = 0;
+    state.session.studyTime = 0;
+    state.session.accSessionMs = 0;
+    state.session.sessionTime = 0;
+    DOM.timerDisplay.textContent = '00:00:00';
+    if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
+    if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+    updateStartButtonLabel();
+  }
+}
+
+/**
+ * Upsert the live session into IndexedDB and localStorage.
+ */
+async function autoSaveSession() {
+  if (!state.session.active && (state.session.studyTime || 0) === 0) return;
+  try {
+    const record = saveTodayToLocalStorage();
+    if (record) await DB.saveSession(record);
+  } catch (e) {
+    showToast('error', 'Auto-save failed',
+      'Could not save your study record to storage. ' + (e?.message || e));
+  }
+}
+
+/**
+ * On startup, finalize any unclosed sessions from previous days.
  */
 async function recoverUnfinishedSessions() {
   try {
-    const all = await DB.getAllSessions(true);
-    const unfinished = all.filter(s => s.endTime === null);
-    if (unfinished.length === 0) return;
+    const todayStr = getLocalDateString();
+    const all = await new Promise((res, rej) => {
+      const tx = DB.db.transaction(['sessions'], 'readwrite');
+      const store = tx.objectStore('sessions');
+      const req = store.getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
 
-    for (const s of unfinished) {
-      s.endTime = s.lastSaved || s.startTime;
-      s.sessionTime = s.endTime - s.startTime;
-      s.pausedTime = Math.max(0, s.sessionTime - s.studyTime - (s.unverifiedTime || 0));
-      if (Array.isArray(s.pauses)) {
-        s.pauses.forEach(p => {
-          if (p.end === null) p.end = s.endTime;
-        });
+    const tx = DB.db.transaction(['sessions'], 'readwrite');
+    const store = tx.objectStore('sessions');
+    let pastRecoveredCount = 0;
+
+    for (const s of all) {
+      const dStr = s.date || getLocalDateString(s.startTime || Date.now());
+      if (dStr < todayStr && s.endTime === null) {
+        s.endTime = s.lastSaved || s.startTime;
+        s.sessionTime = s.endTime - (s.startTime || s.endTime);
+        s.pausedTime = Math.max(0, s.sessionTime - (s.studyTime || 0) - (s.unverifiedTime || 0));
+        store.put(s);
+        pastRecoveredCount++;
       }
-      await DB.saveSession(s);
     }
-    showToast('info', `Recovered ${unfinished.length} session${unfinished.length > 1 ? 's' : ''}`,
-      'A previous session was closed unexpectedly. It has been saved.');
+
+    if (pastRecoveredCount > 0) {
+      showToast('info', 'Past session saved',
+        `Previous study session from before today has been finalized and archived.`);
+    }
   } catch (e) {
-    showToast('error', 'Recovery failed', 'Could not recover previous session: ' + (e?.message || e));
+    console.warn('Recovery check error:', e);
   }
 }
 
@@ -2003,21 +2219,138 @@ const DB = {
     });
   },
 
-  async getAllSessions(includeUnfinished = false) {
+  async getDailyRecord(dateStr) {
+    if (!this.db) await this.init();
+    return new Promise((resolve) => {
+      const tx = this.db.transaction(['sessions'], 'readonly');
+      const store = tx.objectStore('sessions');
+      const req = store.get('day_' + dateStr);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  },
+
+  async getDailyRecords() {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {
       const tx    = this.db.transaction(['sessions'], 'readonly');
       const store = tx.objectStore('sessions');
-      const req   = store.index('startTime').getAll();
+      const req   = store.getAll();
       req.onsuccess = () => {
-        let results = req.result;
-        if (!includeUnfinished) {
-          results = results.filter(s => s.endTime !== null);
+        const all = req.result || [];
+        const daysMap = new Map();
+
+        all.forEach(item => {
+          const dStr = item.date || getLocalDateString(item.startTime || Date.now());
+          const dayId = 'day_' + dStr;
+          if (!daysMap.has(dayId)) {
+            daysMap.set(dayId, {
+              id: dayId,
+              date: dStr,
+              startTime: item.startTime || Date.now(),
+              endTime: item.endTime,
+              studyTime: 0,
+              sessionTime: 0,
+              pausedTime: 0,
+              unverifiedTime: 0,
+              distractions: { lookAway: 0, away: 0, lidClosed: 0 },
+              pauses: [],
+              lastSaved: item.lastSaved || item.startTime
+            });
+          }
+          const day = daysMap.get(dayId);
+          day.studyTime += (item.studyTime || 0);
+          day.sessionTime += (item.sessionTime || 0);
+          day.pausedTime += (item.pausedTime || 0);
+          day.unverifiedTime += (item.unverifiedTime || 0);
+          day.distractions.lookAway += (item.distractions?.lookAway || 0);
+          day.distractions.away += (item.distractions?.away || 0);
+          day.distractions.lidClosed += (item.distractions?.lidClosed || 0);
+          if (item.startTime && item.startTime < day.startTime) day.startTime = item.startTime;
+          if (item.endTime && (!day.endTime || item.endTime > day.endTime)) day.endTime = item.endTime;
+          if (item.lastSaved && (!day.lastSaved || item.lastSaved > day.lastSaved)) day.lastSaved = item.lastSaved;
+        });
+
+        // Overlay today's live/localStorage record
+        const todayStr = getLocalDateString();
+        const todayDayId = 'day_' + todayStr;
+        const currentToday = (state.session.studyTime > 0 || state.session.active)
+          ? buildSessionRecord()
+          : null;
+        if (currentToday && currentToday.date === todayStr) {
+          const existing = daysMap.get(todayDayId);
+          if (!existing) {
+            daysMap.set(todayDayId, currentToday);
+          } else {
+            existing.studyTime = Math.max(existing.studyTime, currentToday.studyTime);
+            existing.sessionTime = Math.max(existing.sessionTime, currentToday.sessionTime);
+            existing.distractions.lookAway = Math.max(existing.distractions.lookAway, currentToday.distractions.lookAway);
+            existing.distractions.away = Math.max(existing.distractions.away, currentToday.distractions.away);
+            existing.distractions.lidClosed = Math.max(existing.distractions.lidClosed, currentToday.distractions.lidClosed);
+          }
         }
-        resolve(results.sort((a, b) => b.startTime - a.startTime));
+
+        const sorted = Array.from(daysMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+        resolve(sorted);
       };
       req.onerror = () => reject(req.error);
     });
+  },
+
+  async getAllSessions() {
+    return this.getDailyRecords();
+  },
+
+  async consolidateToDaily() {
+    if (!this.db) await this.init();
+    try {
+      const tx = this.db.transaction(['sessions'], 'readwrite');
+      const store = tx.objectStore('sessions');
+      const allReq = store.getAll();
+      allReq.onsuccess = () => {
+        const all = allReq.result || [];
+        const sessionRows = all.filter(s => s.id && s.id.startsWith('sess_'));
+        if (sessionRows.length === 0) return;
+
+        const grouped = {};
+        for (const s of sessionRows) {
+          const dStr = s.date || getLocalDateString(s.startTime);
+          if (!grouped[dStr]) grouped[dStr] = [];
+          grouped[dStr].push(s);
+        }
+
+        for (const [dStr, rows] of Object.entries(grouped)) {
+          const dayId = 'day_' + dStr;
+          const existing = all.find(item => item.id === dayId) || {
+            id: dayId,
+            date: dStr,
+            startTime: rows[0].startTime,
+            endTime: rows[rows.length - 1].endTime,
+            studyTime: 0,
+            sessionTime: 0,
+            pausedTime: 0,
+            unverifiedTime: 0,
+            distractions: { lookAway: 0, away: 0, lidClosed: 0 },
+            pauses: [],
+            lastSaved: Date.now()
+          };
+
+          for (const r of rows) {
+            existing.studyTime += (r.studyTime || 0);
+            existing.sessionTime += (r.sessionTime || 0);
+            existing.pausedTime += (r.pausedTime || 0);
+            existing.unverifiedTime += (r.unverifiedTime || 0);
+            existing.distractions.lookAway += (r.distractions?.lookAway || 0);
+            existing.distractions.away += (r.distractions?.away || 0);
+            existing.distractions.lidClosed += (r.distractions?.lidClosed || 0);
+            if (r.startTime < existing.startTime) existing.startTime = r.startTime;
+            if (r.endTime && (!existing.endTime || r.endTime > existing.endTime)) existing.endTime = r.endTime;
+            store.delete(r.id);
+          }
+          store.put(existing);
+        }
+      };
+    } catch (_) {}
   },
 
   async clearAll() {
@@ -2025,7 +2358,10 @@ const DB = {
     return new Promise((resolve, reject) => {
       const tx  = this.db.transaction(['sessions'], 'readwrite');
       const req = tx.objectStore('sessions').clear();
-      req.onsuccess = () => resolve();
+      req.onsuccess = () => {
+        localStorage.removeItem('ayush_tracker_today');
+        resolve();
+      };
       req.onerror   = () => reject(req.error);
     });
   },
@@ -2052,11 +2388,16 @@ async function refreshDashboard() {
 function buildDashboardStats(sessions) {
   // Aggregate today's stats
   const now = new Date();
+  const todayDateStr = getLocalDateString();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   
-  let todayStudy = 0;
-  let todaySession = 0;
-  let todayDist = { lookAway: 0, away: 0, lidClosed: 0 };
+  let todayStudy = (state.session.studyTime || 0);
+  let todaySession = (state.session.sessionTime || 0);
+  let todayDist = {
+    lookAway: state.session.distractions?.lookAway || 0,
+    away: state.session.distractions?.away || 0,
+    lidClosed: state.session.distractions?.lidClosed || 0
+  };
   
   // Aggregate this week's stats
   const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0=Mon, 6=Sun
@@ -2067,22 +2408,27 @@ function buildDashboardStats(sessions) {
   const dailyTotals = {};
 
   sessions.forEach(s => {
-    // Determine the day string YYYY-MM-DD (local time approximation)
-    const dateStr = new Date(s.startTime - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    dailyTotals[dateStr] = (dailyTotals[dateStr] || 0) + s.studyTime;
+    const dateStr = s.date || getLocalDateString(s.startTime);
+    dailyTotals[dateStr] = Math.max(dailyTotals[dateStr] || 0, s.studyTime);
 
-    if (s.startTime >= startOfToday) {
-      todayStudy += s.studyTime;
-      todaySession += s.sessionTime;
-      todayDist.lookAway += s.distractions.lookAway;
-      todayDist.away += s.distractions.away;
-      todayDist.lidClosed += s.distractions.lidClosed;
+    if (dateStr === todayDateStr || s.startTime >= startOfToday) {
+      todayStudy = Math.max(todayStudy, s.studyTime);
+      todaySession = Math.max(todaySession, s.sessionTime);
+      todayDist.lookAway = Math.max(todayDist.lookAway, s.distractions?.lookAway || 0);
+      todayDist.away = Math.max(todayDist.away, s.distractions?.away || 0);
+      todayDist.lidClosed = Math.max(todayDist.lidClosed, s.distractions?.lidClosed || 0);
     }
     
     if (s.startTime >= startOfWeek) {
       weeklyStudy += s.studyTime;
     }
   });
+
+  // Make sure today's live total is included in weekly study and streak
+  if (todayStudy > 0 && !sessions.some(s => (s.date || getLocalDateString(s.startTime)) === todayDateStr)) {
+    weeklyStudy += todayStudy;
+  }
+  dailyTotals[todayDateStr] = Math.max(dailyTotals[todayDateStr] || 0, todayStudy);
 
   // Update UI Stats
   if (DOM.dashStudyTime) DOM.dashStudyTime.textContent = formatDuration(todayStudy);
@@ -2110,7 +2456,7 @@ function buildDashboardStats(sessions) {
   
   for (let i = 0; i < 365; i++) {
     const d = new Date(startOfToday - (i * 86400000));
-    const dStr = new Date(d.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    const dStr = getLocalDateString(d.getTime());
     const studied = dailyTotals[dStr] || 0;
     
     if (i === 0 && studied < goalMs) {
@@ -2142,18 +2488,29 @@ function buildDashboardStats(sessions) {
 
 function renderRecentSessions(sessions) {
   if (!DOM.homeRecentSessions) return;
-  const recent = sessions.slice(0, 3);
+  const recent = sessions.slice(0, 5);
   if (recent.length === 0) {
-    DOM.homeRecentSessions.innerHTML = '<div class="empty-recent-item">No sessions completed yet</div>';
+    DOM.homeRecentSessions.innerHTML = '<div class="empty-recent-item">No study time recorded yet</div>';
     return;
   }
+  const todayStr = getLocalDateString();
+  const yesterdayStr = getLocalDateString(Date.now() - 86400000);
+
   DOM.homeRecentSessions.innerHTML = recent.map(s => {
+    let dayLabel = s.date;
+    if (s.date === todayStr) {
+      dayLabel = 'Today • ' + new Date(s.startTime || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } else if (s.date === yesterdayStr) {
+      dayLabel = 'Yesterday • ' + new Date(s.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } else {
+      dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    }
     const focusPct = s.sessionTime > 0 ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
     const totalDist = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
     return `
       <div class="recent-session-item">
         <div class="recent-session-info">
-          <div class="recent-session-date">${new Date(s.startTime).toLocaleDateString()} &bull; ${formatTimestamp(s.startTime)}</div>
+          <div class="recent-session-date">${dayLabel}</div>
           <div class="recent-session-meta">Focus: ${focusPct}% &bull; ${totalDist} dist.</div>
         </div>
         <div class="recent-session-dur">${formatDuration(s.studyTime)}</div>
@@ -2221,17 +2578,28 @@ function buildSessionList(sessions) {
 
   if (sessions.length === 0) {
     DOM.sessionList.innerHTML =
-      '<p style="padding:1rem;color:var(--text-secondary)">No sessions yet. Start studying!</p>';
+      '<p style="padding:1rem;color:var(--text-secondary)">No days recorded yet. Start studying!</p>';
     return;
   }
 
-  sessions.slice(0, 20).forEach(s => {
+  const todayStr = getLocalDateString();
+  const yesterdayStr = getLocalDateString(Date.now() - 86400000);
+
+  sessions.slice(0, 30).forEach(s => {
+    let dayLabel = s.date;
+    if (s.date === todayStr) {
+      dayLabel = 'Today (' + new Date(s.startTime || Date.now()).toLocaleDateString() + ')';
+    } else if (s.date === yesterdayStr) {
+      dayLabel = 'Yesterday (' + new Date(s.startTime).toLocaleDateString() + ')';
+    } else {
+      dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
     const focusPct  = s.sessionTime > 0
       ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
     const totalDist = (s.distractions?.lookAway || 0) +
                       (s.distractions?.away      || 0) +
                       (s.distractions?.lidClosed || 0);
-    const endStr    = s.endTime ? formatTimestamp(s.endTime) : '?';
 
     const item = document.createElement('div');
     item.className = 'session-item';
@@ -2239,19 +2607,19 @@ function buildSessionList(sessions) {
                          'padding:12px 16px;border-bottom:1px solid var(--border-color)';
     item.innerHTML = `
       <div>
-        <div style="font-weight:500">
-          ${new Date(s.startTime).toLocaleDateString()}
-          &nbsp;– ${formatTimestamp(s.startTime)} – ${endStr}
+        <div style="font-weight:600;color:var(--text-primary)">
+          ${dayLabel}
         </div>
         <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px">
-          Focus ${focusPct}% &middot;
-          ${totalDist} distraction${totalDist !== 1 ? 's' : ''}
+          Focus: ${focusPct}% &middot;
+          ${totalDist} distraction${totalDist !== 1 ? 's' : ''} &middot;
+          Active: ${formatDuration(s.sessionTime)}
         </div>
       </div>
-      <div style="font-weight:600;color:var(--primary-color);text-align:right">
-        <div>${formatDuration(s.studyTime)}</div>
-        <div style="font-size:0.8rem;font-weight:400;color:var(--text-secondary)">
-          of ${formatDuration(s.sessionTime)}
+      <div style="font-weight:700;color:var(--primary-color);text-align:right">
+        <div style="font-size:1.05rem">${formatDuration(s.studyTime)}</div>
+        <div style="font-size:0.75rem;font-weight:500;color:var(--text-muted)">
+          day's learned
         </div>
       </div>`;
     DOM.sessionList.appendChild(item);
@@ -2534,33 +2902,41 @@ async function registerServiceWorker() {
 
 async function handleExportCSV() {
   try {
-    const sessions = await DB.getAllSessions();
-    if (sessions.length === 0) {
+    const records = await DB.getDailyRecords();
+    if (records.length === 0) {
       showToast('warning', 'No Data', 'There is no study data to export.');
       return;
     }
     
-    let csv = 'ID,Start Time,End Time,Study Time (ms),Session Time (ms),Unverified Time (ms),Look Aways,Aways,Lid Closed\n';
+    let csv = 'Date,Day Learned Time (ms),Day Learned Duration,Active Time (ms),Paused Time (ms),Focus %,Look Aways,Aways,Lid Closed,Goal Met\n';
+    const goalMs = state.settings.dailyGoal * 3600000;
     
-    sessions.forEach(s => {
-      csv += `${s.id},`;
-      csv += `"${new Date(s.startTime).toISOString()}",`;
-      csv += `"${new Date(s.endTime).toISOString()}",`;
-      csv += `${s.studyTime},${s.sessionTime},${s.unverifiedTime || 0},`;
-      csv += `${s.distractions.lookAway},${s.distractions.away},${s.distractions.lidClosed}\n`;
+    records.forEach(r => {
+      const focusPct = r.sessionTime > 0 ? Math.round((r.studyTime / r.sessionTime) * 100) : 100;
+      const goalMet = r.studyTime >= goalMs ? 'Yes' : 'No';
+      csv += `"${r.date}",`;
+      csv += `${r.studyTime},`;
+      csv += `"${formatDuration(r.studyTime)}",`;
+      csv += `${r.sessionTime},`;
+      csv += `${r.pausedTime || 0},`;
+      csv += `${focusPct}%,`;
+      csv += `${r.distractions?.lookAway || 0},`;
+      csv += `${r.distractions?.away || 0},`;
+      csv += `${r.distractions?.lidClosed || 0},`;
+      csv += `"${goalMet}"\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ayush-tracker-data-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `ayush-tracker-daily-records-${getLocalDateString()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    showToast('success', 'Exported!', 'Your study data has been downloaded.');
+    showToast('success', 'Exported!', 'Your daily study records have been downloaded.');
   } catch (e) {
     console.error('Export failed:', e);
     showToast('error', 'Export failed', 'Could not export data.');
@@ -2571,6 +2947,27 @@ async function handleDeleteAll() {
   if (confirm('Delete all study data? This cannot be undone.')) {
     try {
       await DB.clearAll();
+      localStorage.removeItem('ayush_tracker_today');
+      const todayStr = getLocalDateString();
+      state.session = {
+        active: false,
+        id: 'day_' + todayStr,
+        dateStr: todayStr,
+        startTime: null,
+        studyStartedAt: null,
+        sessionStartedAt: null,
+        accStudyMs: 0,
+        accSessionMs: 0,
+        studyTime: 0,
+        sessionTime: 0,
+        unverifiedTime: 0,
+        distractions: { lookAway: 0, away: 0, lidClosed: 0 },
+        pauses: [],
+      };
+      DOM.timerDisplay.textContent = '00:00:00';
+      if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
+      if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+      updateStartButtonLabel();
       showToast('warning', 'Data cleared', 'All study data has been deleted.');
       refreshDashboard();
     } catch (e) {
@@ -2653,6 +3050,22 @@ function handleUserActivity() {
   lastActivityTimestamp = Date.now();
 }
 
+/**
+ * Periodically or on tab focus check if date rolled over into a new day
+ * while the app was idle.
+ */
+function checkDayRollover() {
+  const currentDayStr = getLocalDateString();
+  if (state.session.dateStr && state.session.dateStr !== currentDayStr) {
+    if (state.session.active) {
+      handleMidnightRollover(Date.now(), currentDayStr);
+    } else {
+      loadTodayState();
+      refreshDashboard();
+    }
+  }
+}
+
 
 // ═══════════════════════════════════════════════
 // 28. INITIALISE THE APP
@@ -2668,8 +3081,34 @@ function init() {
     });
   }
 
+  // Load today's accumulated progress immediately from localStorage
+  loadTodayState();
+
   DB.init()
+    .then(() => DB.consolidateToDaily())
     .then(() => recoverUnfinishedSessions())
+    .then(async () => {
+      // Reconcile with IndexedDB today's record if present
+      const todayStr = getLocalDateString();
+      const dbDay = await DB.getDailyRecord(todayStr);
+      if (dbDay && (dbDay.studyTime || 0) > (state.session.studyTime || 0)) {
+        state.session.id = dbDay.id;
+        state.session.dateStr = dbDay.date;
+        state.session.startTime = dbDay.startTime || state.session.startTime;
+        state.session.accStudyMs = dbDay.studyTime;
+        state.session.studyTime = dbDay.studyTime;
+        state.session.accSessionMs = dbDay.sessionTime;
+        state.session.sessionTime = dbDay.sessionTime;
+        state.session.distractions = dbDay.distractions || state.session.distractions;
+        DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+        if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
+        const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0));
+        if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
+        updateStartButtonLabel();
+        updateSessionStatsDisplay();
+        saveTodayToLocalStorage();
+      }
+    })
     .then(() => refreshDashboard())
     .catch(e => console.error('DB init error:', e));
 
@@ -2685,11 +3124,17 @@ function init() {
 
   // Save when the tab is hidden or the window is about to close.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) autoSaveSession();
+    checkDayRollover();
+    if (document.hidden) {
+      saveTodayToLocalStorage();
+      autoSaveSession();
+    }
   });
+  window.addEventListener('focus', checkDayRollover);
+  setInterval(checkDayRollover, 30000);
+
   window.addEventListener('beforeunload', () => {
-    // synchronous best-effort: IndexedDB is async so this may not complete,
-    // but the recovery logic on next load will handle any dropped saves.
+    saveTodayToLocalStorage();
     autoSaveSession();
   });
 

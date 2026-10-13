@@ -164,3 +164,112 @@ describe('Ayush_Tracker — Timer & Goal Math', () => {
     assert.equal(adjusted, 57000);
   });
 });
+
+describe('Ayush_Tracker — Daily Learned Time & Persistence', () => {
+  function getLocalDateString(timestamp = Date.now()) {
+    const d = new Date(timestamp);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function simulateResumeDaily(existingRecord, newStudyElapsed) {
+    const baseStudyMs = existingRecord ? existingRecord.studyTime : 0;
+    const baseSessionMs = existingRecord ? existingRecord.sessionTime : 0;
+    return {
+      studyTime: baseStudyMs + newStudyElapsed,
+      sessionTime: baseSessionMs + newStudyElapsed,
+    };
+  }
+
+  function consolidateSessionsToDaily(sessions) {
+    const daysMap = new Map();
+    sessions.forEach(s => {
+      const dateStr = s.date || getLocalDateString(s.startTime);
+      const dayId = 'day_' + dateStr;
+      if (!daysMap.has(dayId)) {
+        daysMap.set(dayId, {
+          id: dayId,
+          date: dateStr,
+          studyTime: 0,
+          sessionTime: 0,
+          distractions: { lookAway: 0, away: 0, lidClosed: 0 }
+        });
+      }
+      const day = daysMap.get(dayId);
+      day.studyTime += (s.studyTime || 0);
+      day.sessionTime += (s.sessionTime || 0);
+      day.distractions.lookAway += (s.distractions?.lookAway || 0);
+      day.distractions.away += (s.distractions?.away || 0);
+      day.distractions.lidClosed += (s.distractions?.lidClosed || 0);
+    });
+    return Array.from(daysMap.values());
+  }
+
+  function simulateMidnightRollover(startTime, endTime) {
+    // Splits a session crossing midnight into yesterday and today buckets
+    const dEnd = new Date(endTime);
+    dEnd.setHours(0, 0, 0, 0);
+    const midnightBoundary = dEnd.getTime();
+
+    const yesterdayPart = Math.max(0, midnightBoundary - startTime);
+    const todayPart = Math.max(0, endTime - midnightBoundary);
+    return { yesterdayPart, todayPart };
+  }
+
+  test('getLocalDateString returns YYYY-MM-DD format for local date', () => {
+    const testDate = new Date(2026, 9, 13, 14, 30); // Oct 13, 2026
+    assert.equal(getLocalDateString(testDate.getTime()), '2026-10-13');
+  });
+
+  test('timer resumes from where left off when restarting or refreshing on the same day', () => {
+    const todayRecord = { date: '2026-10-13', studyTime: 1800000, sessionTime: 2000000 }; // 30 mins previously learned
+    const continued = simulateResumeDaily(todayRecord, 600000); // 10 mins more
+    assert.equal(continued.studyTime, 2400000); // 40 mins cumulative learned
+    assert.equal(continued.sessionTime, 2600000);
+  });
+
+  test('multiple sessions within a day consolidate into single daily learned total', () => {
+    const fragmentedSessions = [
+      { date: '2026-10-13', studyTime: 600000, sessionTime: 700000, distractions: { lookAway: 1, away: 0, lidClosed: 0 } },
+      { date: '2026-10-13', studyTime: 900000, sessionTime: 1000000, distractions: { lookAway: 0, away: 1, lidClosed: 0 } },
+      { date: '2026-10-13', studyTime: 300000, sessionTime: 300000, distractions: { lookAway: 0, away: 0, lidClosed: 1 } },
+      { date: '2026-10-12', studyTime: 3600000, sessionTime: 4000000, distractions: { lookAway: 2, away: 1, lidClosed: 0 } },
+    ];
+    const dailyRecords = consolidateSessionsToDaily(fragmentedSessions);
+    assert.equal(dailyRecords.length, 2);
+
+    const todayRec = dailyRecords.find(d => d.date === '2026-10-13');
+    assert.ok(todayRec);
+    assert.equal(todayRec.studyTime, 1800000); // 10m + 15m + 5m = 30m total
+    assert.equal(todayRec.sessionTime, 2000000);
+    assert.equal(todayRec.distractions.lookAway, 1);
+    assert.equal(todayRec.distractions.away, 1);
+    assert.equal(todayRec.distractions.lidClosed, 1);
+  });
+
+  test('midnight rollover partitions study time and resets today timer to new day', () => {
+    const d1 = new Date(2026, 9, 13, 23, 45).getTime(); // 11:45 PM Oct 13
+    const d2 = new Date(2026, 9, 14, 0, 15).getTime();  // 12:15 AM Oct 14
+    const rollover = simulateMidnightRollover(d1, d2);
+
+    assert.equal(rollover.yesterdayPart, 15 * 60 * 1000); // 15 mins archived to yesterday
+    assert.equal(rollover.todayPart, 15 * 60 * 1000);     // 15 mins start of new day
+  });
+
+  test('timer resets to 00:00:00 only on a new calendar date, not when refreshing same day', () => {
+    const savedRecord = { date: '2026-10-13', studyTime: 1234000 };
+    const sameDayCheck = getLocalDateString(new Date(2026, 9, 13, 16, 0).getTime());
+    const nextDayCheck = getLocalDateString(new Date(2026, 9, 14, 9, 0).getTime());
+
+    // Same day reload: retains 1234000
+    const reloadSameDayTime = (savedRecord.date === sameDayCheck) ? savedRecord.studyTime : 0;
+    assert.equal(reloadSameDayTime, 1234000);
+
+    // Next day reload: resets to 0
+    const reloadNextDayTime = (savedRecord.date === nextDayCheck) ? savedRecord.studyTime : 0;
+    assert.equal(reloadNextDayTime, 0);
+  });
+});
+
