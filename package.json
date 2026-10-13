@@ -1,0 +1,31 @@
+{
+  "name": "ayush_tracker",
+  "version": "1.0.0",
+  "description": "Private, offline-first study time tracker using in-browser computer vision focus detection.",
+  "main": "app.js",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "lint": "node -c app.js sw.js worker.js",
+    "start": "python3 -m http.server 8080"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fayaspsulfikkar/ayush_tracker.git"
+  },
+  "keywords": [
+    "productivity",
+    "study-tracker",
+    "mediapipe",
+    "computer-vision",
+    "face-detection",
+    "pwa",
+    "offline-first",
+    "privacy"
+  ],
+  "author": "Fayas P Sulfikkar",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/fayaspsulfikkar/ayush_tracker/issues"
+  },
+  "homepage": "https://github.com/fayaspsulfikkar/ayush_tracker#readme"
+}

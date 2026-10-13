@@ -1,0 +1,46 @@
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Editor & IDE Directories
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Node & Package Managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+package-lock.json
+
+# Environment & Secrets (Never commit secrets)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Test & Coverage Outputs
+coverage/
+.nyc_output/
+
+# Temporary and Build Files
+tmp/
+temp/
+*.tmp
+*.bak
+dist/
+build/
