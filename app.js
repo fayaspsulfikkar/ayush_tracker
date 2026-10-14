@@ -54,6 +54,7 @@ const DOM = {
   calibrationOverlay:    document.getElementById('calibration-overlay'),
   calibrationProgressBar: document.getElementById('calibration-progress-bar'),
   calibrationCountdown:  document.getElementById('calibration-countdown'),
+  calibrationSubstatus:  document.getElementById('calibration-substatus'),
 
   // Header
   cameraIndicator: document.getElementById('camera-indicator'),
@@ -187,12 +188,12 @@ const state = {
 
   // Settings (loaded from localStorage)
   settings: {
-    sensitivity: 'medium',     // 'low' | 'medium' | 'high'
-    focusThreshold: 80,        // percentage (50-99): timer stops immediately if focus < focusThreshold
-    lookawayTime: 10,          // seconds
-    awayTime: 30,              // seconds
+    sensitivity: 'low',        // 'low' | 'medium' | 'high'
+    focusThreshold: 50,        // percentage (50-99): timer pauses if focus < focusThreshold
+    lookawayTime: 3,           // seconds
+    awayTime: 10,              // seconds
     readingMode: false,
-    dailyGoal: 4,              // hours
+    dailyGoal: 6,              // hours
     soundOn: true,
     volume: 50,                // 0-100
     notificationsOn: true,
@@ -296,24 +297,31 @@ function loadSettings() {
   try {
     const saved = localStorage.getItem('ayush-tracker-settings') || localStorage.getItem('ai-spectator-settings');
     if (saved) {
-      Object.assign(state.settings, JSON.parse(saved));
+      const parsed = JSON.parse(saved);
+      // Migrate previous legacy defaults to new defaults if they were untouched
+      if (parsed.focusThreshold === 80 || parsed.focusThreshold === 95) parsed.focusThreshold = 50;
+      if (parsed.sensitivity === 'medium') parsed.sensitivity = 'low';
+      if (parsed.lookawayTime === 10) parsed.lookawayTime = 3;
+      if (parsed.awayTime === 30) parsed.awayTime = 10;
+      if (parsed.dailyGoal === 4) parsed.dailyGoal = 6;
+      Object.assign(state.settings, parsed);
     }
   } catch (e) {
     console.warn('Could not load settings:', e);
   }
 
   // Apply to UI controls
-  if (state.settings.focusThreshold === undefined || state.settings.focusThreshold === 95) {
-    state.settings.focusThreshold = 80;
+  if (state.settings.focusThreshold === undefined || state.settings.focusThreshold === 80 || state.settings.focusThreshold === 95) {
+    state.settings.focusThreshold = 50;
   }
   if (DOM.settingFocusThreshold) {
-    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 80;
+    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 50;
     if (DOM.settingFocusThresholdVal) {
-      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 80) + '%';
+      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 50) + '%';
     }
   }
   if (DOM.liveFocusThresholdTag) {
-    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 80)}%`;
+    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 50)}%`;
   }
   DOM.settingSensitivity.value   = state.settings.sensitivity;
   DOM.settingLookawayTime.value  = state.settings.lookawayTime;
@@ -338,7 +346,7 @@ function initSettingsListeners() {
   if (DOM.settingFocusThreshold) {
     DOM.settingFocusThreshold.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
-      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 80));
+      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 50));
       if (DOM.settingFocusThresholdVal) {
         DOM.settingFocusThresholdVal.textContent = state.settings.focusThreshold + '%';
       }
@@ -368,13 +376,13 @@ function initSettingsListeners() {
   });
 
   DOM.settingLookawayTime.addEventListener('change', (e) => {
-    state.settings.lookawayTime = Math.max(3, Math.min(60, parseInt(e.target.value) || 10));
+    state.settings.lookawayTime = Math.max(1, Math.min(60, parseInt(e.target.value) || 3));
     e.target.value = state.settings.lookawayTime;
     saveSettings();
   });
 
   DOM.settingAwayTime.addEventListener('change', (e) => {
-    state.settings.awayTime = Math.max(10, Math.min(120, parseInt(e.target.value) || 30));
+    state.settings.awayTime = Math.max(5, Math.min(120, parseInt(e.target.value) || 10));
     e.target.value = state.settings.awayTime;
     saveSettings();
   });
@@ -385,7 +393,7 @@ function initSettingsListeners() {
   });
 
   DOM.settingDailyGoal.addEventListener('change', (e) => {
-    state.settings.dailyGoal = Math.max(0.5, Math.min(16, parseFloat(e.target.value) || 4));
+    state.settings.dailyGoal = Math.max(0.5, Math.min(16, parseFloat(e.target.value) || 6));
     e.target.value = state.settings.dailyGoal;
     DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
     saveSettings();
@@ -1133,6 +1141,13 @@ async function runCalibration() {
 
     const DURATION_MS = 5000; // 5 seconds
 
+    // Reset progress and notice UI immediately
+    DOM.calibrationProgressBar.style.width = '0%';
+    DOM.calibrationCountdown.textContent = '5s remaining';
+    if (DOM.calibrationSubstatus) {
+      DOM.calibrationSubstatus.textContent = 'Hold steady in your natural study posture…';
+    }
+
     // Show the calibration overlay
     DOM.calibrationOverlay.classList.add('active');
     setStatus('calibrating');
@@ -1150,6 +1165,20 @@ async function runCalibration() {
       const remaining = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000));
       DOM.calibrationCountdown.textContent = remaining + 's remaining';
 
+      if (DOM.calibrationSubstatus) {
+        if (remaining >= 4) {
+          DOM.calibrationSubstatus.textContent = 'Hold steady in your normal study posture…';
+        } else if (remaining === 3) {
+          DOM.calibrationSubstatus.textContent = 'Calculating baseline pitch and yaw angles…';
+        } else if (remaining === 2) {
+          DOM.calibrationSubstatus.textContent = 'Calibrating neutral position for study timer…';
+        } else if (remaining === 1) {
+          DOM.calibrationSubstatus.textContent = 'Finalizing neutral posture calculation…';
+        } else {
+          DOM.calibrationSubstatus.textContent = 'Calibration complete!';
+        }
+      }
+
       if (progress >= 1) {
         clearInterval(checkInterval);
 
@@ -1160,7 +1189,7 @@ async function runCalibration() {
           // Not enough samples — face wasn't detected reliably
           DOM.calibrationOverlay.classList.remove('active');
           showToast('warning', 'Calibration failed',
-            'Could not detect your face consistently. Please try again in good lighting.');
+            'Could not detect your face consistently. Please sit in your study position facing the camera in good lighting and try again.');
           state.calibration.isCalibrating = false;
           resolve(false);
           return;
@@ -1181,7 +1210,7 @@ async function runCalibration() {
         DOM.calibrationOverlay.classList.remove('active');
         state.calibration.isCalibrating = false;
 
-        showToast('success', 'Calibration done!', 'Your neutral angle has been saved. Start studying!');
+        showToast('success', 'Calibration Done!', 'Baseline posture calculated. Your study timer is now active!');
         resolve(true);
       }
     }, 100); // Check every 100ms for smooth progress bar
@@ -1273,8 +1302,8 @@ function runDetection() {
   const faceFound = results.faceLandmarks && results.faceLandmarks.length > 0;
   updatePipeline('Face', faceFound);
   
-  // Draw canvas overlay if checked
-  if (DOM.livePreviewCb.checked) {
+  // Draw canvas overlay if checked & main tab is active (saves CPU/GPU headroom in background)
+  if (DOM.livePreviewCb.checked && !document.hidden) {
     const canvas = DOM.liveCanvas;
     const ctx = canvas.getContext('2d');
     canvas.width = video.videoWidth;
@@ -1324,27 +1353,29 @@ function runDetection() {
 
     // Calculate focus score and screen facing state
     const focusScore = calculateFocusScore(smoothed);
-    const cutoff = state.settings.focusThreshold || 80;
+    const cutoff = state.settings.focusThreshold || 50;
     const isFacingScreen = focusScore >= cutoff;
 
-    // ── Update the Focus gauge and head-position dot ──
-    updateFocusIndicator(smoothed, focusScore);
+    // ── Update the Focus gauge only when tab is visible to minimize background headroom ──
+    if (!document.hidden) {
+      updateFocusIndicator(smoothed, focusScore);
 
-    // Update Picture-in-Picture window in real time
-    updatePiP(focusScore);
-
-    // Update pipeline indicator for screen focus with live percentage
-    if (DOM.pipeFocus) {
-      if (isFacingScreen) {
-        DOM.pipeFocus.textContent = `✅ Facing Screen (${focusScore}%)`;
-        DOM.pipeFocus.classList.add('pipe-ok');
-        DOM.pipeFocus.classList.remove('pipe-warn');
-      } else {
-        DOM.pipeFocus.textContent = `👀 Focus Low (${focusScore}% < ${cutoff}%)`;
-        DOM.pipeFocus.classList.remove('pipe-ok');
-        DOM.pipeFocus.classList.add('pipe-warn');
+      // Update pipeline indicator for screen focus with live percentage
+      if (DOM.pipeFocus) {
+        if (isFacingScreen) {
+          DOM.pipeFocus.textContent = `✅ Facing Screen (${focusScore}%)`;
+          DOM.pipeFocus.classList.add('pipe-ok');
+          DOM.pipeFocus.classList.remove('pipe-warn');
+        } else {
+          DOM.pipeFocus.textContent = `👀 Focus Low (${focusScore}% < ${cutoff}%)`;
+          DOM.pipeFocus.classList.remove('pipe-ok');
+          DOM.pipeFocus.classList.add('pipe-warn');
+        }
       }
     }
+
+    // Update Picture-in-Picture window in real time (always active)
+    updatePiP(focusScore);
 
     // Update the state machine (stops suddenly if focusScore < cutoff)
     processDetectionResult(true, isFacingScreen, focusScore);
@@ -1488,8 +1519,10 @@ function updateFocusIndicator(pose, focusScore) {
 function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
   const now = Date.now();
   const hp = state.headPose;
-  const cutoff = state.settings.focusThreshold || 80;
+  const cutoff = state.settings.focusThreshold || 50;
   const isFocused = faceDetected && (focusScore >= cutoff);
+  const lookawayLimit = (state.settings.lookawayTime || 3) * 1000;
+  const awayLimit = (state.settings.awayTime || 10) * 1000;
 
   // ── STUDYING ──
   if (state.status === 'studying') {
@@ -1503,33 +1536,45 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
     }
 
     if (faceDetected && !isFocused) {
-      // Face visible but focus dropped below cutoff (< 80%) — SUDDEN STOP!
+      // Face visible but focus dropped below cutoff — wait lookawayTime before pausing
+      if (hp.lookAwayStart === 0) {
+        hp.lookAwayStart = now;
+      }
       hp.facingScreenSince = 0;
-      hp.lookAwayStart = now;
 
-      freezeStudyTime(now);
-      startPauseEvent('lookAway', now);
-      setStatus('looking-away');
-      state.session.distractions.lookAway++;
-      triggerNudge('lookAway');
-      updateSessionStatsDisplay();
-      autoSaveSession();
+      const lookawayElapsed = now - hp.lookAwayStart;
+      if (lookawayElapsed >= lookawayLimit) {
+        // Freeze back-dated to when the user actually looked away
+        freezeStudyTime(hp.lookAwayStart);
+        startPauseEvent('lookAway', hp.lookAwayStart);
+        setStatus('looking-away');
+        state.session.distractions.lookAway++;
+        triggerNudge('lookAway');
+        updateSessionStatsDisplay();
+        autoSaveSession();
+      }
       return;
     }
 
     if (!faceDetected) {
-      // Face completely lost — SUDDEN STOP!
+      // Face completely lost — wait awayTime (time pause when face gone) before pausing
+      if (hp.awayStart === 0) {
+        hp.awayStart = now;
+      }
       hp.facingScreenSince = 0;
-      hp.awayStart = now;
       hp.lookAwayStart = 0;
 
-      freezeStudyTime(now);
-      startPauseEvent('away', now);
-      setStatus('away');
-      state.session.distractions.away++;
-      triggerNudge('away');
-      updateSessionStatsDisplay();
-      autoSaveSession();
+      const awayElapsed = now - hp.awayStart;
+      if (awayElapsed >= awayLimit) {
+        // Freeze back-dated to when the face was lost
+        freezeStudyTime(hp.awayStart);
+        startPauseEvent('away', hp.awayStart);
+        setStatus('away');
+        state.session.distractions.away++;
+        triggerNudge('away');
+        updateSessionStatsDisplay();
+        autoSaveSession();
+      }
       return;
     }
   }
@@ -2642,14 +2687,17 @@ async function togglePiP() {
 
   if (state.pipWindow) {
     state.pipWindow.close();
+    state.pipWindow = null;
+    if (DOM.pipBtn) DOM.pipBtn.classList.remove('pip-active');
     return;
   }
 
   try {
     state.pipWindow = await documentPictureInPicture.requestWindow({
-      width: 320,
-      height: 190,
+      width: 210,
+      height: 86,
     });
+    if (DOM.pipBtn) DOM.pipBtn.classList.add('pip-active');
     
     // Copy parent document stylesheets into the PiP window
     [...document.styleSheets].forEach((styleSheet) => {
@@ -2668,44 +2716,42 @@ async function togglePiP() {
       }
     });
 
-    // Injected dedicated inline styles for bulletproof PiP color transitions & animations
+    // Injected dedicated inline styles for fully responsive PiP window
+    state.pipWindow.document.documentElement.classList.add('pip-html');
+    state.pipWindow.document.body.classList.add('pip-body');
+
     const customStyle = document.createElement('style');
     customStyle.textContent = `
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        margin: 0; padding: 0; overflow: hidden;
+      html.pip-html, body.pip-body, body {
+        width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+        container-type: size; container-name: piproot;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #090d16; color: #f1f5f9; user-select: none; height: 100vh;
+        background: #090d16; color: #f1f5f9; user-select: none;
       }
       .pip-root {
+        width: 100%; height: 100vh;
         display: flex; flex-direction: column; justify-content: space-between; align-items: center;
-        height: 100vh; padding: 12px 16px; position: relative;
-        transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-        border: 3px solid transparent; box-sizing: border-box; overflow: hidden;
+        padding: clamp(4px, 4cqh, 16px) clamp(6px, 3.5cqw, 20px);
+        gap: clamp(2px, 2.5cqh, 10px);
+        position: relative;
+        transition: background 0.25s ease, border-color 0.25s ease;
+        border: clamp(1px, 0.6cqmin, 3px) solid #334155; box-sizing: border-box; overflow: hidden;
       }
       .pip-root[data-status="studying"] {
         background: radial-gradient(circle at center, #0d281e 0%, #061114 100%);
         border-color: #10b981;
-        box-shadow: inset 0 0 25px rgba(16, 185, 129, 0.25), 0 0 15px rgba(16, 185, 129, 0.3);
       }
-      .pip-root[data-status="studying"] .pip-timer {
-        color: #10b981; text-shadow: 0 0 28px rgba(16, 185, 129, 0.6);
-      }
+      .pip-root[data-status="studying"] .pip-timer { color: #10b981; }
       .pip-root[data-status="studying"] .pip-badge {
-        background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5);
+        background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);
       }
-      .pip-root[data-status="studying"] .pip-badge-dot {
-        background: #10b981; box-shadow: 0 0 8px #10b981;
-      }
+      .pip-root[data-status="studying"] .pip-badge-dot { background: #10b981; }
       .pip-root[data-status="looking-away"] {
-        background: radial-gradient(circle at center, #36140b 0%, #170705 100%);
+        background: radial-gradient(circle at center, #2e1208 0%, #150604 100%);
         border-color: #f59e0b;
-        box-shadow: inset 0 0 35px rgba(245, 158, 11, 0.45), 0 0 25px rgba(245, 158, 11, 0.5);
-        animation: pip-alert-amber 0.9s ease-in-out infinite alternate;
       }
-      .pip-root[data-status="looking-away"] .pip-timer {
-        color: #f59e0b; text-shadow: 0 0 28px rgba(245, 158, 11, 0.8);
-      }
+      .pip-root[data-status="looking-away"] .pip-timer { color: #f59e0b; }
       .pip-root[data-status="looking-away"] .pip-badge {
         background: #f59e0b; color: #000000; font-weight: 700; border: 1px solid #fbbf24;
       }
@@ -2714,22 +2760,16 @@ async function togglePiP() {
         display: flex !important; background: rgba(245, 158, 11, 0.25); color: #fbbf24; border-color: rgba(245, 158, 11, 0.5);
       }
       .pip-root[data-status="away"], .pip-root[data-status="lid-closed"] {
-        background: radial-gradient(circle at center, #380812 0%, #190308 100%);
+        background: radial-gradient(circle at center, #30070e 0%, #170206 100%);
         border-color: #ef4444;
-        box-shadow: inset 0 0 45px rgba(239, 68, 68, 0.55), 0 0 30px rgba(239, 68, 68, 0.65);
-        animation: pip-alert-red 0.8s ease-in-out infinite alternate;
       }
-      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer {
-        color: #ef4444; text-shadow: 0 0 28px rgba(239, 68, 68, 0.9);
-      }
+      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: #ef4444; }
       .pip-root[data-status="away"] .pip-badge, .pip-root[data-status="lid-closed"] .pip-badge {
         background: #ef4444; color: #ffffff; font-weight: 700; border: 1px solid #f87171;
       }
-      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot {
-        background: #ffffff; box-shadow: 0 0 8px #ffffff;
-      }
+      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot { background: #ffffff; }
       .pip-root[data-status="away"] .pip-alert-banner, .pip-root[data-status="lid-closed"] .pip-alert-banner {
-        display: flex !important; background: rgba(239, 68, 68, 0.3); color: #fca5a5; border-color: rgba(239, 68, 68, 0.6);
+        display: flex !important; background: rgba(239, 68, 68, 0.25); color: #fca5a5; border-color: rgba(239, 68, 68, 0.5);
       }
       .pip-root[data-status="idle"], .pip-root[data-status="calibrating"] {
         background: #0f172a; border-color: #334155;
@@ -2738,33 +2778,66 @@ async function togglePiP() {
       .pip-root[data-status="idle"] .pip-badge {
         background: #1e293b; color: #94a3b8; border: 1px solid #334155;
       }
-      .pip-header { width: 100%; display: flex; justify-content: space-between; align-items: center; }
-      .pip-badge {
-        display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px;
-        font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.25s ease;
+      .pip-header {
+        width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 6px;
       }
-      .pip-badge-dot { width: 7px; height: 7px; border-radius: 50%; }
+      .pip-badge {
+        display: inline-flex; align-items: center; gap: clamp(3px, 1.2cqmin, 6px);
+        padding: clamp(2px, 1.8cqh, 6px) clamp(6px, 2.5cqw, 12px); border-radius: 9999px;
+        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.04em; white-space: nowrap; transition: all 0.2s ease;
+      }
+      .pip-badge-dot {
+        width: clamp(4px, 2.5cqmin, 8px); height: clamp(4px, 2.5cqmin, 8px); border-radius: 50%; flex-shrink: 0;
+      }
       .pip-focus-tag {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 0.72rem; color: #94a3b8; font-weight: 600;
+        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); color: #94a3b8; font-weight: 600; white-space: nowrap;
       }
       .pip-timer {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 3.2rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1; margin: 4px 0;
-        transition: color 0.25s ease, text-shadow 0.25s ease;
+        font-size: clamp(1.2rem, min(48cqh, 17.2cqw), 5.5rem); font-weight: 700; letter-spacing: -0.03em;
+        line-height: 1; margin: 0; flex: 1; display: flex; align-items: center; justify-content: center;
+        text-align: center; white-space: nowrap; transition: color 0.2s ease;
       }
       .pip-alert-banner {
-        width: 100%; display: none; align-items: center; justify-content: center; gap: 6px;
-        padding: 4px 8px; border-radius: 6px; font-size: 0.74rem; font-weight: 700;
-        letter-spacing: 0.04em; border: 1px solid transparent;
+        width: 100%; display: none; align-items: center; justify-content: center; gap: clamp(3px, 1.5cqmin, 6px);
+        padding: clamp(2px, 1.8cqh, 6px) clamp(6px, 2cqw, 10px); border-radius: clamp(3px, 1.5cqmin, 6px);
+        font-size: clamp(0.55rem, min(12cqh, 3.8cqw), 0.85rem); font-weight: 700;
+        letter-spacing: 0.03em; border: 1px solid transparent; white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis; flex-shrink: 0;
       }
-      @keyframes pip-alert-amber {
-        0% { border-color: #f59e0b; box-shadow: inset 0 0 25px rgba(245, 158, 11, 0.3), 0 0 15px rgba(245, 158, 11, 0.4); }
-        100% { border-color: #fbbf24; box-shadow: inset 0 0 50px rgba(245, 158, 11, 0.65), 0 0 35px rgba(245, 158, 11, 0.8); }
+      @container piproot (max-height: 65px) and (min-width: 170px) {
+        .pip-root {
+          flex-direction: row; justify-content: space-between; align-items: center; padding: 3px 8px; gap: 8px;
+        }
+        .pip-header {
+          width: auto; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;
+        }
+        .pip-timer {
+          flex: 1; justify-content: flex-end; font-size: clamp(1.1rem, min(65cqh, 16cqw), 2.4rem);
+        }
+        .pip-alert-banner {
+          position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10;
+        }
       }
-      @keyframes pip-alert-red {
-        0% { border-color: #ef4444; box-shadow: inset 0 0 30px rgba(239, 68, 68, 0.35), 0 0 20px rgba(239, 68, 68, 0.45); }
-        100% { border-color: #ff3333; box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.8), 0 0 45px rgba(239, 68, 68, 0.95); }
+      @container piproot (max-aspect-ratio: 11/10) {
+        .pip-root {
+          padding: clamp(8px, 6cqh, 24px) clamp(8px, 6cqw, 24px); gap: clamp(4px, 4cqh, 16px);
+        }
+        .pip-timer { font-size: clamp(1.4rem, min(36cqh, 19cqw), 6rem); }
+      }
+      .pip-root[data-layout="compact-row"] {
+        flex-direction: row; justify-content: space-between; align-items: center; padding: 3px 8px; gap: 8px;
+      }
+      .pip-root[data-layout="compact-row"] .pip-header {
+        width: auto; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;
+      }
+      .pip-root[data-layout="compact-row"] .pip-timer {
+        flex: 1; justify-content: flex-end;
+      }
+      .pip-root[data-layout="compact-row"] .pip-alert-banner {
+        position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10;
       }
     `;
     state.pipWindow.document.head.appendChild(customStyle);
@@ -2785,15 +2858,34 @@ async function togglePiP() {
 
         <div id="pip-alert-banner" class="pip-alert-banner">
           <span id="pip-alert-icon">⚠️</span>
-          <span id="pip-alert-text">TIMER PAUSED — LOOKING AWAY</span>
+          <span id="pip-alert-text">PAUSED — LOOKING AWAY</span>
         </div>
       </div>
     `;
 
     state.pipWindow.document.documentElement.setAttribute('data-theme', state.theme);
 
+    function updatePiPResponsiveLayout() {
+      if (!state.pipWindow) return;
+      const w = state.pipWindow.innerWidth;
+      const h = state.pipWindow.innerHeight;
+      const root = state.pipWindow.document.getElementById('pip-container');
+      if (!root) return;
+      root.style.setProperty('--pip-w', `${w}px`);
+      root.style.setProperty('--pip-h', `${h}px`);
+      if (h < 65 && w >= 170) {
+        root.setAttribute('data-layout', 'compact-row');
+      } else {
+        root.setAttribute('data-layout', 'column');
+      }
+    }
+
+    state.pipWindow.addEventListener('resize', updatePiPResponsiveLayout);
+    updatePiPResponsiveLayout();
+
     state.pipWindow.addEventListener('pagehide', () => {
       state.pipWindow = null;
+      if (DOM.pipBtn) DOM.pipBtn.classList.remove('pip-active');
     });
 
     updatePiP();
@@ -2820,7 +2912,7 @@ function updatePiP(focusScore) {
   const alertIconEl = state.pipWindow.document.getElementById('pip-alert-icon');
   const focusTagEl = state.pipWindow.document.getElementById('pip-focus-tag');
   
-  const cutoff = state.settings.focusThreshold ?? 80;
+  const cutoff = state.settings.focusThreshold ?? 50;
   const score = typeof focusScore === 'number'
     ? focusScore
     : (state.headPose.faceDetected ? calculateFocusScore(state.headPose) : 0);
@@ -2835,9 +2927,9 @@ function updatePiP(focusScore) {
 
   if (textEl) {
     if (state.status === 'studying') textEl.textContent = 'Studying';
-    else if (state.status === 'looking-away') textEl.textContent = 'Paused — Looking Away';
-    else if (state.status === 'away') textEl.textContent = 'Paused — No Face';
-    else if (state.status === 'lid-closed') textEl.textContent = 'Paused — Sleeping';
+    else if (state.status === 'looking-away') textEl.textContent = 'Looking Away';
+    else if (state.status === 'away') textEl.textContent = 'No Face';
+    else if (state.status === 'lid-closed') textEl.textContent = 'Sleeping';
     else textEl.textContent = DOM.statusText.textContent || 'Idle';
   }
 
@@ -2855,15 +2947,15 @@ function updatePiP(focusScore) {
     if (state.status === 'looking-away') {
       alertEl.style.display = 'flex';
       if (alertIconEl) alertIconEl.textContent = '👀';
-      alertTextEl.textContent = `PAUSED: FOCUS ${score}% < ${cutoff}%`;
+      alertTextEl.textContent = `PAUSED (FOCUS ${score}% < ${cutoff}%)`;
     } else if (state.status === 'away') {
       alertEl.style.display = 'flex';
       if (alertIconEl) alertIconEl.textContent = '❌';
-      alertTextEl.textContent = 'PAUSED: NO FACE DETECTED';
+      alertTextEl.textContent = 'PAUSED: NO FACE';
     } else if (state.status === 'lid-closed') {
       alertEl.style.display = 'flex';
       if (alertIconEl) alertIconEl.textContent = '💤';
-      alertTextEl.textContent = 'PAUSED: LAPTOP ASLEEP';
+      alertTextEl.textContent = 'PAUSED: ASLEEP';
     } else {
       alertEl.style.display = 'none';
     }

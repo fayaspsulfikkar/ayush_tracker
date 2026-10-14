@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Ayush_Tracker — Track your real study time using webcam focus detection. Timer runs only while you face the screen.">
-  <meta name="theme-color" content="#7c3aed">
+  <meta name="theme-color" content="#6D5BE0">
 
   <title>Ayush_Tracker — Study Time Tracker</title>
 
@@ -49,14 +49,28 @@
   <div id="calibration-overlay" class="calibration-overlay">
     <div class="calibration-card">
       <div class="calibration-icon">🎯</div>
-      <h2 class="calibration-title">Quick Calibration</h2>
+      <h2 class="calibration-title">Neutral Pose Calibration</h2>
+
+      <div class="calibration-notice">
+        <div class="calibration-notice-header">
+          <span class="calibration-notice-icon">⚠️</span>
+          <span class="calibration-notice-title">Crucial Posture Notice</span>
+        </div>
+        <p class="calibration-notice-body">
+          <strong>The position you sit in while calibrating is highly calculated for the timer.</strong>
+          Please sit upright in your natural study posture facing the screen.
+        </p>
+      </div>
+
       <p class="calibration-text">
-        Look at your screen normally. This takes 5 seconds to learn your natural head angle.
+        Learning your natural head angle (5 seconds) so focus tracking is calibrated accurately to your setup.
       </p>
+
       <div class="calibration-progress">
         <div id="calibration-progress-bar" class="calibration-progress-bar"></div>
       </div>
       <div id="calibration-countdown" class="calibration-countdown">5s remaining</div>
+      <div id="calibration-substatus" class="calibration-substatus">Hold steady facing screen…</div>
     </div>
   </div>
 
@@ -187,7 +201,7 @@
               <div class="live-section">
                 <div class="live-section-title" style="display: flex; justify-content: space-between; align-items: center;">
                   <span>Screen Focus</span>
-                  <span id="live-focus-threshold-tag" style="font-size: 0.7rem; font-family: var(--font-mono); font-weight: 500; color: var(--text-muted);">Cutoff: 80%</span>
+                  <span id="live-focus-threshold-tag" style="font-size: 0.7rem; font-family: var(--font-mono); font-weight: 500; color: var(--text-muted);">Cutoff: 50%</span>
                 </div>
                 <div class="focus-indicator-wrap">
                   <!-- Radial gauge -->
@@ -370,7 +384,7 @@
           </div>
           <div class="chart-meta">
             <div class="chart-meta-item">
-              Goal: <span id="daily-goal-display" class="chart-meta-value">4h</span>
+              Goal: <span id="daily-goal-display" class="chart-meta-value">6h</span>
             </div>
             <div id="streak-badge" class="streak-badge">
               🔥 0 day streak
@@ -423,11 +437,11 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">Face Focus Threshold</div>
-            <div class="setting-description">Timer stops immediately if focus falls below this percentage</div>
+            <div class="setting-description">Timer pauses if focus falls below this percentage</div>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <input id="setting-focus-threshold" class="range" type="range" min="50" max="99" value="80" style="width: 100px;">
-            <span id="setting-focus-threshold-val" style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; min-width: 38px; color: var(--accent);">80%</span>
+            <input id="setting-focus-threshold" class="range" type="range" min="50" max="99" value="50" style="width: 100px;">
+            <span id="setting-focus-threshold-val" style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; min-width: 38px; color: var(--accent);">50%</span>
           </div>
         </div>
 
@@ -438,8 +452,8 @@
           </div>
           <div class="select-wrap">
             <select id="setting-sensitivity" class="select">
-              <option value="low">Low (35°)</option>
-              <option value="medium" selected>Medium (25°)</option>
+              <option value="low" selected>Low (35°)</option>
+              <option value="medium">Medium (25°)</option>
               <option value="high">High (15°)</option>
             </select>
           </div>
@@ -456,9 +470,9 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">Look-away time</div>
-            <div class="setting-description">Max seconds allowed away before distraction count increments</div>
+            <div class="setting-description">Seconds before "looking away" pauses timer</div>
           </div>
-          <input id="setting-lookaway-time" class="input-number" type="number" min="1" max="60" value="10">
+          <input id="setting-lookaway-time" class="input-number" type="number" min="1" max="60" value="3">
         </div>
 
         <div class="setting-row">
@@ -466,7 +480,7 @@
             <div class="setting-label">Away time</div>
             <div class="setting-description">Seconds with no face before "away" pauses timer</div>
           </div>
-          <input id="setting-away-time" class="input-number" type="number" min="5" max="120" value="30">
+          <input id="setting-away-time" class="input-number" type="number" min="5" max="120" value="10">
         </div>
 
         <div class="setting-row">
@@ -489,7 +503,7 @@
           <div>
             <div class="setting-label">Daily goal (hours)</div>
           </div>
-          <input id="setting-daily-goal" class="input-number" type="number" min="0.5" max="16" step="0.5" value="4">
+          <input id="setting-daily-goal" class="input-number" type="number" min="0.5" max="16" step="0.5" value="6">
         </div>
       </div>
 

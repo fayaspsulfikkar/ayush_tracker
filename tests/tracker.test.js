@@ -142,11 +142,14 @@ describe('Ayush_Tracker — Focus Measurement & Sudden Stopping', () => {
     assert.equal(readingScore, 100);
   });
 
-  test('timer triggers sudden pause immediately if focus < cutoff threshold (80%)', () => {
-    const cutoff = 80;
-    const focusScore = calculateFocusScore({ yaw: 10, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
-    const shouldStopImmediately = focusScore < cutoff;
-    assert.equal(shouldStopImmediately, true);
+  test('timer triggers pause if focus < cutoff threshold (80% or default 50%)', () => {
+    const cutoff80 = 80;
+    const focusScore80 = calculateFocusScore({ yaw: 10, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
+    assert.equal(focusScore80 < cutoff80, true);
+
+    const cutoff50 = 50;
+    const focusScore50 = calculateFocusScore({ yaw: 18, pitch: 0 }, { yaw: 0, pitch: 0 }, 25);
+    assert.equal(focusScore50 < cutoff50, true);
   });
 });
 
