@@ -17,7 +17,7 @@
    When you update the app, bump CACHE_VERSION to force a refresh.
    ============================================ */
 
-const CACHE_VERSION = 'ayush-tracker-v3';
+const CACHE_VERSION = 'ayush-tracker-v8';
 
 // List of files to pre-cache when the service worker installs.
 // These files will be available offline immediately after first load.
@@ -113,23 +113,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For Google Fonts (CSS and font files): network-first with cache fallback
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const responseClone = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
-    return;
-  }
-
-  // Fallback for any other external requests: cache first, then network
+  // Fallback for any other requests (e.g. models or assets): cache first, then network
   event.respondWith(
     caches.match(event.request)
       .then((cachedResponse) => {

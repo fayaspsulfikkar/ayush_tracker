@@ -181,7 +181,7 @@ const state = {
   status: 'idle',
 
   // Theme: 'light' | 'dark'
-  theme: 'dark',
+  theme: 'light',
 
   // Active tab: 'timer' | 'dashboard'
   activeTab: 'timer',
@@ -430,22 +430,29 @@ function initSettingsListeners() {
 // ═══════════════════════════════════════════════
 
 function initTheme() {
+  const params = new URLSearchParams(window.location.search);
+  const paramTheme = params.get('theme');
   const saved = localStorage.getItem('ayush-tracker-theme') || localStorage.getItem('ai-spectator-theme');
-  if (saved) {
+  if (paramTheme && (paramTheme === 'light' || paramTheme === 'dark')) {
+    state.theme = paramTheme;
+  } else if (saved) {
     state.theme = saved;
   } else {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    state.theme = prefersDark ? 'dark' : 'light';
+    state.theme = 'light';
   }
   applyTheme();
 }
 
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', state.theme);
-  DOM.themeToggle.textContent = state.theme === 'dark' ? '☀️' : '🌙';
+  if (DOM.themeToggle) {
+    DOM.themeToggle.innerHTML = state.theme === 'dark'
+      ? `<svg class="tool-svg theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`
+      : `<svg class="tool-svg theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
+  }
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
-    metaTheme.content = state.theme === 'dark' ? '#080816' : '#f1f5f9';
+    metaTheme.content = state.theme === 'dark' ? '#211F1C' : '#E0E7EC';
   }
 
   if (state.pipWindow) {
@@ -515,7 +522,8 @@ function closeSettings() {
 // ═══════════════════════════════════════════════
 
 function initPrivacyModal() {
-  const accepted = localStorage.getItem('ayush-tracker-privacy-accepted') || localStorage.getItem('ai-spectator-privacy-accepted');
+  const params = new URLSearchParams(window.location.search);
+  const accepted = params.has('skipPrivacy') || localStorage.getItem('ayush-tracker-privacy-accepted') || localStorage.getItem('ai-spectator-privacy-accepted');
   if (!accepted) {
     DOM.privacyModal.classList.add('active');
   }
@@ -587,11 +595,16 @@ async function requestNotificationPermission() {
 // ═══════════════════════════════════════════════
 
 function showToast(type, title, message, duration = 5000) {
-  const icons = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+  const icons = {
+    info: `<svg class="icon-svg-sm text-accent" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>`,
+    success: `<svg class="icon-svg-sm text-success" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>`,
+    warning: `<svg class="icon-svg-sm text-warning" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>`,
+    error: `<svg class="icon-svg-sm text-danger" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>`
+  };
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.innerHTML = `
-    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="toast-icon">${icons[type] || icons.info}</span>
     <div class="toast-content">
       <div class="toast-title">${title}</div>
       <div class="toast-message">${message}</div>
@@ -633,6 +646,20 @@ function formatDuration(ms) {
   return `${Math.floor(ms / 1000)}s`;
 }
 
+/**
+ * Format a focus percentage from study time and total session tracking time.
+ * Returns '—' when session duration is zero (empty state),
+ * or 'X%' when session tracking data exists.
+ *
+ * @param {number} studyMs — verified study time in ms
+ * @param {number} sessionMs — total session duration in ms
+ * @returns {string}
+ */
+function formatFocusPercentage(studyMs, sessionMs) {
+  if (!sessionMs || sessionMs <= 0) return '—';
+  return Math.round((Math.max(0, studyMs) / sessionMs) * 100) + '%';
+}
+
 /** Format a timestamp as a time string like "2:34 PM" */
 function formatTimestamp(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -651,7 +678,7 @@ function getLocalDateString(timestamp = Date.now()) {
 function updateStartButtonLabel() {
   if (!DOM.startBtn) return;
   const hasTime = (state.session.studyTime || state.session.accStudyMs || 0) > 0;
-  DOM.startBtn.innerHTML = `<span class="btn-icon">▶</span> ${hasTime ? 'Continue Studying' : 'Start Studying'}`;
+  DOM.startBtn.innerHTML = `<svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> <span class="btn-text">${hasTime ? 'Continue Studying' : 'Start Studying'}</span>`;
 }
 
 
@@ -1320,7 +1347,7 @@ function runDetection() {
         if (p.y < minY) minY = p.y;
         if (p.y > maxY) maxY = p.y;
       }
-      ctx.strokeStyle = '#00ff00';
+      ctx.strokeStyle = state.theme === 'dark' ? '#A3AD91' : '#258564';
       ctx.lineWidth = 4;
       ctx.strokeRect(minX * canvas.width, minY * canvas.height, (maxX - minX) * canvas.width, (maxY - minY) * canvas.height);
     }
@@ -1662,10 +1689,10 @@ function updateSessionStatsDisplay() {
   if (DOM.statDistractions) DOM.statDistractions.textContent = totalDistractions;
   if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDistractions;
 
-  // Focus % = study time / session time
-  const focusPercent = s.sessionTime > 0 ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
-  if (DOM.statFocus) DOM.statFocus.textContent = focusPercent + '%';
-  if (DOM.homeFocus) DOM.homeFocus.textContent = focusPercent + '%';
+  // Focus % = study time / session time (displays '—' when no session data exists)
+  const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
+  if (DOM.statFocus) DOM.statFocus.textContent = focusDisplay;
+  if (DOM.homeFocus) DOM.homeFocus.textContent = focusDisplay;
 
   // Hero subtimes: Session time and Paused time
   const pausedMs = Math.max(0, s.sessionTime - s.studyTime - (s.unverifiedTime || 0));
@@ -2419,6 +2446,7 @@ const DB = {
 
 async function refreshDashboard() {
   DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
+  buildChart([]);
   
   try {
     const sessions = await DB.getAllSessions();
@@ -2478,8 +2506,8 @@ function buildDashboardStats(sessions) {
   // Update UI Stats
   if (DOM.dashStudyTime) DOM.dashStudyTime.textContent = formatDuration(todayStudy);
   
-  const focusPercent = todaySession > 0 ? Math.round((todayStudy / todaySession) * 100) : 100;
-  if (DOM.dashFocus) DOM.dashFocus.textContent = focusPercent + '%';
+  const focusDisplay = formatFocusPercentage(todayStudy, todaySession);
+  if (DOM.dashFocus) DOM.dashFocus.textContent = focusDisplay;
   
   const totalDist = todayDist.lookAway + todayDist.away + todayDist.lidClosed;
   if (DOM.dashDistractions) DOM.dashDistractions.textContent = totalDist;
@@ -2492,7 +2520,7 @@ function buildDashboardStats(sessions) {
 
   // Update Summary cards on Home
   if (DOM.homeStudyTime) DOM.homeStudyTime.textContent = formatDuration(todayStudy);
-  if (DOM.homeFocus) DOM.homeFocus.textContent = focusPercent + '%';
+  if (DOM.homeFocus) DOM.homeFocus.textContent = focusDisplay;
   if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDist;
 
   // Calculate Streak
@@ -2550,13 +2578,13 @@ function renderRecentSessions(sessions) {
     } else {
       dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     }
-    const focusPct = s.sessionTime > 0 ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
+    const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
     const totalDist = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
     return `
       <div class="recent-session-item">
         <div class="recent-session-info">
           <div class="recent-session-date">${dayLabel}</div>
-          <div class="recent-session-meta">Focus: ${focusPct}% &bull; ${totalDist} dist.</div>
+          <div class="recent-session-meta">Focus: ${focusDisplay} &bull; ${totalDist} dist.</div>
         </div>
         <div class="recent-session-dur">${formatDuration(s.studyTime)}</div>
       </div>
@@ -2623,7 +2651,7 @@ function buildSessionList(sessions) {
 
   if (sessions.length === 0) {
     DOM.sessionList.innerHTML =
-      '<p style="padding:1rem;color:var(--text-secondary)">No days recorded yet. Start studying!</p>';
+      '<div class="empty-state"><div class="empty-state-icon text-muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></div><div class="empty-state-text">No recorded study days yet. Begin your first focused session on the tracker!</div></div>';
     return;
   }
 
@@ -2640,29 +2668,26 @@ function buildSessionList(sessions) {
       dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
     }
 
-    const focusPct  = s.sessionTime > 0
-      ? Math.round((s.studyTime / s.sessionTime) * 100) : 100;
+    const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
     const totalDist = (s.distractions?.lookAway || 0) +
                       (s.distractions?.away      || 0) +
                       (s.distractions?.lidClosed || 0);
 
     const item = document.createElement('div');
     item.className = 'session-item';
-    item.style.cssText = 'display:flex;justify-content:space-between;align-items:center;' +
-                         'padding:12px 16px;border-bottom:1px solid var(--border-color)';
     item.innerHTML = `
       <div>
         <div style="font-weight:600;color:var(--text-primary)">
           ${dayLabel}
         </div>
-        <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px">
-          Focus: ${focusPct}% &middot;
+        <div style="font-size:0.8125rem;color:var(--text-secondary);margin-top:2px">
+          Focus: ${focusDisplay} &middot;
           ${totalDist} distraction${totalDist !== 1 ? 's' : ''} &middot;
           Active: ${formatDuration(s.sessionTime)}
         </div>
       </div>
-      <div style="font-weight:700;color:var(--primary-color);text-align:right">
-        <div style="font-size:1.05rem">${formatDuration(s.studyTime)}</div>
+      <div style="font-weight:700;color:var(--accent-primary);text-align:right">
+        <div class="font-mono" style="font-size:1.1rem">${formatDuration(s.studyTime)}</div>
         <div style="font-size:0.75rem;font-weight:500;color:var(--text-muted)">
           day's learned
         </div>
@@ -2727,7 +2752,7 @@ async function togglePiP() {
         width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
         container-type: size; container-name: piproot;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #090d16; color: #f1f5f9; user-select: none;
+        background: #211F1C; color: #F0ECE3; user-select: none;
       }
       .pip-root {
         width: 100%; height: 100vh;
@@ -2736,47 +2761,47 @@ async function togglePiP() {
         gap: clamp(2px, 2.5cqh, 10px);
         position: relative;
         transition: background 0.25s ease, border-color 0.25s ease;
-        border: clamp(1px, 0.6cqmin, 3px) solid #334155; box-sizing: border-box; overflow: hidden;
+        border: clamp(1px, 0.6cqmin, 3px) solid #413C33; box-sizing: border-box; overflow: hidden;
       }
       .pip-root[data-status="studying"] {
-        background: radial-gradient(circle at center, #0d281e 0%, #061114 100%);
-        border-color: #10b981;
+        background: radial-gradient(circle at center, #322F29 0%, #1E1C19 100%);
+        border-color: #A3AD91;
       }
-      .pip-root[data-status="studying"] .pip-timer { color: #10b981; }
+      .pip-root[data-status="studying"] .pip-timer { color: #A3AD91; }
       .pip-root[data-status="studying"] .pip-badge {
-        background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);
+        background: rgba(163, 173, 145, 0.18); color: #A3AD91; border: 1px solid rgba(163, 173, 145, 0.35);
       }
-      .pip-root[data-status="studying"] .pip-badge-dot { background: #10b981; }
+      .pip-root[data-status="studying"] .pip-badge-dot { background: #A3AD91; }
       .pip-root[data-status="looking-away"] {
-        background: radial-gradient(circle at center, #2e1208 0%, #150604 100%);
-        border-color: #f59e0b;
+        background: radial-gradient(circle at center, #382D20 0%, #1E1710 100%);
+        border-color: #D49B4B;
       }
-      .pip-root[data-status="looking-away"] .pip-timer { color: #f59e0b; }
+      .pip-root[data-status="looking-away"] .pip-timer { color: #D49B4B; }
       .pip-root[data-status="looking-away"] .pip-badge {
-        background: #f59e0b; color: #000000; font-weight: 700; border: 1px solid #fbbf24;
+        background: #D49B4B; color: #211F1C; font-weight: 700; border: 1px solid #E5AC5C;
       }
-      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #000000; }
+      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #211F1C; }
       .pip-root[data-status="looking-away"] .pip-alert-banner {
-        display: flex !important; background: rgba(245, 158, 11, 0.25); color: #fbbf24; border-color: rgba(245, 158, 11, 0.5);
+        display: flex !important; background: rgba(212, 155, 75, 0.22); color: #E5AC5C; border-color: rgba(212, 155, 75, 0.45);
       }
       .pip-root[data-status="away"], .pip-root[data-status="lid-closed"] {
-        background: radial-gradient(circle at center, #30070e 0%, #170206 100%);
-        border-color: #ef4444;
+        background: radial-gradient(circle at center, #3A261E 0%, #1E130E 100%);
+        border-color: #C78B70;
       }
-      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: #ef4444; }
+      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: #C78B70; }
       .pip-root[data-status="away"] .pip-badge, .pip-root[data-status="lid-closed"] .pip-badge {
-        background: #ef4444; color: #ffffff; font-weight: 700; border: 1px solid #f87171;
+        background: #C78B70; color: #ffffff; font-weight: 700; border: 1px solid #D89E85;
       }
       .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot { background: #ffffff; }
       .pip-root[data-status="away"] .pip-alert-banner, .pip-root[data-status="lid-closed"] .pip-alert-banner {
-        display: flex !important; background: rgba(239, 68, 68, 0.25); color: #fca5a5; border-color: rgba(239, 68, 68, 0.5);
+        display: flex !important; background: rgba(199, 139, 112, 0.22); color: #D89E85; border-color: rgba(199, 139, 112, 0.45);
       }
       .pip-root[data-status="idle"], .pip-root[data-status="calibrating"] {
-        background: #0f172a; border-color: #334155;
+        background: #211F1C; border-color: #413C33;
       }
-      .pip-root[data-status="idle"] .pip-timer { color: #94a3b8; }
+      .pip-root[data-status="idle"] .pip-timer { color: #AAA397; }
       .pip-root[data-status="idle"] .pip-badge {
-        background: #1e293b; color: #94a3b8; border: 1px solid #334155;
+        background: #322F29; color: #AAA397; border: 1px solid #413C33;
       }
       .pip-header {
         width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 6px;
@@ -2849,7 +2874,7 @@ async function togglePiP() {
             <span class="pip-badge-dot"></span>
             <span id="pip-status-text">${DOM.statusText.textContent}</span>
           </div>
-          <div id="pip-focus-tag" class="pip-focus-tag">Focus: 100%</div>
+          <div id="pip-focus-tag" class="pip-focus-tag">Focus: —</div>
         </div>
 
         <div id="pip-timer" class="pip-timer" data-status="${state.status}">
@@ -2936,10 +2961,10 @@ function updatePiP(focusScore) {
   if (focusTagEl) {
     if (state.headPose.faceDetected) {
       focusTagEl.textContent = `Focus: ${score}%`;
-      focusTagEl.style.color = score >= cutoff ? '#34d399' : '#f87171';
+      focusTagEl.style.color = score >= cutoff ? 'var(--status-present, #258564)' : 'var(--status-away, #DE5B5E)';
     } else {
       focusTagEl.textContent = 'No Face';
-      focusTagEl.style.color = '#f87171';
+      focusTagEl.style.color = 'var(--status-away, #DE5B5E)';
     }
   }
 
@@ -3004,14 +3029,14 @@ async function handleExportCSV() {
     const goalMs = state.settings.dailyGoal * 3600000;
     
     records.forEach(r => {
-      const focusPct = r.sessionTime > 0 ? Math.round((r.studyTime / r.sessionTime) * 100) : 100;
+      const focusText = formatFocusPercentage(r.studyTime, r.sessionTime);
       const goalMet = r.studyTime >= goalMs ? 'Yes' : 'No';
       csv += `"${r.date}",`;
       csv += `${r.studyTime},`;
       csv += `"${formatDuration(r.studyTime)}",`;
       csv += `${r.sessionTime},`;
       csv += `${r.pausedTime || 0},`;
-      csv += `${focusPct}%,`;
+      csv += `"${focusText}",`;
       csv += `${r.distractions?.lookAway || 0},`;
       csv += `${r.distractions?.away || 0},`;
       csv += `${r.distractions?.lidClosed || 0},`;
@@ -3229,6 +3254,11 @@ function init() {
     saveTodayToLocalStorage();
     autoSaveSession();
   });
+
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('tab') === 'history') switchTab('history');
+  if (urlParams.has('settings')) openSettings();
+  if (urlParams.has('calibrate') && DOM.calibrationOverlay) DOM.calibrationOverlay.classList.add('active');
 
   loadMediaPipeModule();
 }

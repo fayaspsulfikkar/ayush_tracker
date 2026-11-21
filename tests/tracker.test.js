@@ -29,6 +29,11 @@ function formatDuration(ms) {
   return `${Math.floor(ms / 1000)}s`;
 }
 
+function formatFocusPercentage(studyMs, sessionMs) {
+  if (!sessionMs || sessionMs <= 0) return '—';
+  return Math.round((Math.max(0, studyMs) / sessionMs) * 100) + '%';
+}
+
 function calculateYaw(noseX, leftCheekX, rightCheekX) {
   const dLeft = Math.abs(noseX - leftCheekX);
   const dRight = Math.abs(noseX - rightCheekX);
@@ -86,6 +91,20 @@ describe('Ayush_Tracker — Core Formatting', () => {
     assert.equal(formatDuration(45000), '45s');
     assert.equal(formatDuration(150000), '2m');
     assert.equal(formatDuration(3600000 + 120000), '1h 2m');
+  });
+
+  test('formatFocusPercentage returns "—" for empty or zero session time', () => {
+    assert.equal(formatFocusPercentage(0, 0), '—');
+    assert.equal(formatFocusPercentage(1000, 0), '—');
+    assert.equal(formatFocusPercentage(0, null), '—');
+    assert.equal(formatFocusPercentage(0, undefined), '—');
+  });
+
+  test('formatFocusPercentage calculates accurate percentage when session data exists', () => {
+    assert.equal(formatFocusPercentage(0, 60000), '0%');
+    assert.equal(formatFocusPercentage(30000, 60000), '50%');
+    assert.equal(formatFocusPercentage(60000, 60000), '100%');
+    assert.equal(formatFocusPercentage(50000, 60000), '83%');
   });
 });
 
