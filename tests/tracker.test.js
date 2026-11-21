@@ -34,6 +34,100 @@ function formatFocusPercentage(studyMs, sessionMs) {
   return Math.round((Math.max(0, studyMs) / sessionMs) * 100) + '%';
 }
 
+function updatePipelineMock(domMock, step, status, customText) {
+  const el = domMock[`pipe${step}`];
+  if (!el) return;
+
+  el.classes.delete('pipe-ok');
+  el.classes.delete('pipe-warn');
+  el.classes.delete('pipe-err');
+
+  let normStatus = status;
+  if (status === true) normStatus = 'active';
+  if (status === false) normStatus = 'inactive';
+
+  switch (normStatus) {
+    case 'active':
+      el.classes.add('pipe-ok');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '✅ Camera Active',
+          Model: '✅ Model Loaded',
+          Face: '✅ Face Detected',
+          Focus: '✅ Facing Screen',
+          Worker: '✅ Worker Active',
+        };
+        el.textContent = labels[step] || `✅ ${step} Active`;
+      }
+      break;
+
+    case 'loading':
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '⏳ Camera Starting…',
+          Model: '⏳ Model Loading…',
+          Face: '⏳ Face Searching…',
+          Focus: '⏳ Screen Checking…',
+          Worker: '⏳ Worker Starting…',
+        };
+        el.textContent = labels[step] || `⏳ ${step} Loading…`;
+      }
+      break;
+
+    case 'warn':
+      el.classes.add('pipe-warn');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '⚠️ Camera Warning',
+          Model: '⚠️ Model Warning',
+          Face: '👀 No Face',
+          Focus: '👀 Focus Low',
+          Worker: '⚠️ Worker Stalled',
+        };
+        el.textContent = labels[step] || `⚠️ ${step}`;
+      }
+      break;
+
+    case 'error':
+      el.classes.add('pipe-err');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '❌ Camera Error',
+          Model: '❌ Model Failed',
+          Face: '❌ Face Error',
+          Focus: '❌ Screen Lost',
+          Worker: '❌ Worker Error',
+        };
+        el.textContent = labels[step] || `❌ ${step} Error`;
+      }
+      break;
+
+    case 'inactive':
+    default:
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const defaultLabels = {
+          Cam: 'Camera',
+          Model: 'Model',
+          Face: 'Face',
+          Focus: 'Screen',
+          Worker: 'Worker',
+        };
+        el.textContent = defaultLabels[step] || step;
+      }
+      break;
+  }
+}
+
 function calculateYaw(noseX, leftCheekX, rightCheekX) {
   const dLeft = Math.abs(noseX - leftCheekX);
   const dRight = Math.abs(noseX - rightCheekX);
@@ -292,6 +386,106 @@ describe('Ayush_Tracker — Daily Learned Time & Persistence', () => {
     // Next day reload: resets to 0
     const reloadNextDayTime = (savedRecord.date === nextDayCheck) ? savedRecord.studyTime : 0;
     assert.equal(reloadNextDayTime, 0);
+  });
+});
+
+describe('Ayush_Tracker — Vision Telemetry Pipeline', () => {
+  function createDomMock() {
+    return {
+      pipeCam: { textContent: 'Camera', classes: new Set() },
+      pipeModel: { textContent: 'Model', classes: new Set() },
+      pipeFace: { textContent: 'Face', classes: new Set() },
+      pipeFocus: { textContent: 'Screen', classes: new Set() },
+      pipeWorker: { textContent: 'Worker', classes: new Set() },
+    };
+  }
+
+  test('pipeline indicators reflect active states with pipe-ok class', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Cam', 'active');
+    updatePipelineMock(dom, 'Model', 'active');
+    updatePipelineMock(dom, 'Face', 'active');
+    updatePipelineMock(dom, 'Worker', 'active');
+
+    assert.equal(dom.pipeCam.textContent, '✅ Camera Active');
+    assert.ok(dom.pipeCam.classes.has('pipe-ok'));
+
+    assert.equal(dom.pipeModel.textContent, '✅ Model Loaded');
+    assert.ok(dom.pipeModel.classes.has('pipe-ok'));
+
+    assert.equal(dom.pipeFace.textContent, '✅ Face Detected');
+    assert.ok(dom.pipeFace.classes.has('pipe-ok'));
+
+    assert.equal(dom.pipeWorker.textContent, '✅ Worker Active');
+    assert.ok(dom.pipeWorker.classes.has('pipe-ok'));
+  });
+
+  test('pipeline indicators reflect loading states', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Cam', 'loading');
+    updatePipelineMock(dom, 'Model', 'loading');
+    updatePipelineMock(dom, 'Face', 'loading');
+    updatePipelineMock(dom, 'Worker', 'loading');
+
+    assert.equal(dom.pipeCam.textContent, '⏳ Camera Starting…');
+    assert.equal(dom.pipeModel.textContent, '⏳ Model Loading…');
+    assert.equal(dom.pipeFace.textContent, '⏳ Face Searching…');
+    assert.equal(dom.pipeWorker.textContent, '⏳ Worker Starting…');
+    assert.ok(!dom.pipeCam.classes.has('pipe-ok'));
+  });
+
+  test('pipeline indicators reflect warning states with pipe-warn class', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Face', 'warn', '👀 No Face');
+    updatePipelineMock(dom, 'Focus', 'warn', '👀 Focus Low (35% < 50%)');
+    updatePipelineMock(dom, 'Worker', 'warn', '⚠️ Worker Gap');
+
+    assert.equal(dom.pipeFace.textContent, '👀 No Face');
+    assert.ok(dom.pipeFace.classes.has('pipe-warn'));
+
+    assert.equal(dom.pipeFocus.textContent, '👀 Focus Low (35% < 50%)');
+    assert.ok(dom.pipeFocus.classes.has('pipe-warn'));
+
+    assert.equal(dom.pipeWorker.textContent, '⚠️ Worker Gap');
+    assert.ok(dom.pipeWorker.classes.has('pipe-warn'));
+  });
+
+  test('pipeline indicators reflect error states with pipe-err class', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Cam', 'error', '❌ Camera Denied');
+    updatePipelineMock(dom, 'Model', 'error', '❌ Model Failed');
+    updatePipelineMock(dom, 'Worker', 'error', '❌ Worker Error');
+
+    assert.equal(dom.pipeCam.textContent, '❌ Camera Denied');
+    assert.ok(dom.pipeCam.classes.has('pipe-err'));
+
+    assert.equal(dom.pipeModel.textContent, '❌ Model Failed');
+    assert.ok(dom.pipeModel.classes.has('pipe-err'));
+
+    assert.equal(dom.pipeWorker.textContent, '❌ Worker Error');
+    assert.ok(dom.pipeWorker.classes.has('pipe-err'));
+  });
+
+  test('pipeline indicators reset cleanly to inactive default labels', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Cam', 'active');
+    updatePipelineMock(dom, 'Cam', 'inactive');
+
+    assert.equal(dom.pipeCam.textContent, 'Camera');
+    assert.ok(!dom.pipeCam.classes.has('pipe-ok'));
+    assert.ok(!dom.pipeCam.classes.has('pipe-warn'));
+    assert.ok(!dom.pipeCam.classes.has('pipe-err'));
+  });
+
+  test('backward compatibility with boolean status values', () => {
+    const dom = createDomMock();
+    updatePipelineMock(dom, 'Model', true);
+    assert.equal(dom.pipeModel.textContent, '✅ Model Loaded');
+    assert.ok(dom.pipeModel.classes.has('pipe-ok'));
+
+    updatePipelineMock(dom, 'Model', false);
+    assert.equal(dom.pipeModel.textContent, 'Model');
+    assert.ok(!dom.pipeModel.classes.has('pipe-ok'));
   });
 });
 

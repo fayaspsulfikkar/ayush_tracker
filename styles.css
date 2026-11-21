@@ -1171,6 +1171,11 @@ body {
   box-shadow: var(--shadow-raised-sm);
 }
 
+.pipe-item.pipe-err {
+  color: var(--color-brick);
+  box-shadow: var(--shadow-raised-sm);
+}
+
 /* Head Focus Gauge & Reticle Wrap */
 .focus-indicator-wrap {
   display: grid;

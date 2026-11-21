@@ -764,10 +764,102 @@ function hideLiveError() {
   DOM.liveErrorBanner.classList.add('hidden');
 }
 
-function updatePipeline(step, ok) {
+/**
+ * Update a pipeline health indicator in the Vision Telemetry panel.
+ *
+ * @param {'Cam'|'Model'|'Face'|'Focus'|'Worker'} step - Pipeline stage
+ * @param {'active'|'loading'|'inactive'|'warn'|'error'|boolean} status - Operational state
+ * @param {string} [customText] - Optional custom message to display
+ */
+function updatePipeline(step, status, customText) {
   const el = DOM[`pipe${step}`];
-  if (el) {
-    el.innerHTML = ok ? el.innerHTML.replace('❌', '✅') : el.innerHTML.replace('✅', '❌');
+  if (!el) return;
+
+  el.classList.remove('pipe-ok', 'pipe-warn', 'pipe-err');
+
+  let normStatus = status;
+  if (status === true) normStatus = 'active';
+  if (status === false) normStatus = 'inactive';
+
+  switch (normStatus) {
+    case 'active':
+      el.classList.add('pipe-ok');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '✅ Camera Active',
+          Model: '✅ Model Loaded',
+          Face: '✅ Face Detected',
+          Focus: '✅ Facing Screen',
+          Worker: '✅ Worker Active',
+        };
+        el.textContent = labels[step] || `✅ ${step} Active`;
+      }
+      break;
+
+    case 'loading':
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '⏳ Camera Starting…',
+          Model: '⏳ Model Loading…',
+          Face: '⏳ Face Searching…',
+          Focus: '⏳ Screen Checking…',
+          Worker: '⏳ Worker Starting…',
+        };
+        el.textContent = labels[step] || `⏳ ${step} Loading…`;
+      }
+      break;
+
+    case 'warn':
+      el.classList.add('pipe-warn');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '⚠️ Camera Warning',
+          Model: '⚠️ Model Warning',
+          Face: '👀 No Face',
+          Focus: '👀 Focus Low',
+          Worker: '⚠️ Worker Stalled',
+        };
+        el.textContent = labels[step] || `⚠️ ${step}`;
+      }
+      break;
+
+    case 'error':
+      el.classList.add('pipe-err');
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const labels = {
+          Cam: '❌ Camera Error',
+          Model: '❌ Model Failed',
+          Face: '❌ Face Error',
+          Focus: '❌ Screen Lost',
+          Worker: '❌ Worker Error',
+        };
+        el.textContent = labels[step] || `❌ ${step} Error`;
+      }
+      break;
+
+    case 'inactive':
+    default:
+      if (customText) {
+        el.textContent = customText;
+      } else {
+        const defaultLabels = {
+          Cam: 'Camera',
+          Model: 'Model',
+          Face: 'Face',
+          Focus: 'Screen',
+          Worker: 'Worker',
+        };
+        el.textContent = defaultLabels[step] || step;
+      }
+      break;
   }
 }
 
@@ -881,6 +973,7 @@ function triggerNudge(type) {
  * The video element is used by MediaPipe to grab frames.
  */
 async function startCamera() {
+  updatePipeline('Cam', 'loading', '⏳ Camera Starting…');
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -911,12 +1004,15 @@ async function startCamera() {
     state.camera.videoTrack.addEventListener('ended', handleCameraTrackEnded);
 
     console.log('📷 Camera started:', state.camera.videoTrack.label);
+    updatePipeline('Cam', 'active', '✅ Camera Active');
     return true;
 
   } catch (err) {
     console.error('Camera access denied or failed:', err);
     showToast('error', 'Camera required',
       'Ayush_Tracker needs your webcam to detect focus. Please allow camera access and try again.');
+    const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+    updatePipeline('Cam', 'error', isDenied ? '❌ Camera Denied' : '❌ Camera Error');
     return false;
   }
 }
@@ -939,6 +1035,7 @@ function stopCamera() {
   if (DOM.cameraIndicator) DOM.cameraIndicator.classList.remove('visible');
   if (DOM.cameraPreviewContainer) DOM.cameraPreviewContainer.classList.remove('visible');
 
+  updatePipeline('Cam', 'inactive');
   console.log('📷 Camera stopped');
 }
 
@@ -948,6 +1045,7 @@ function stopCamera() {
  * an external webcam, or revokes camera permission.
  */
 function handleCameraTrackEnded() {
+  updatePipeline('Cam', 'error', '❌ Camera Lost');
   if (state.session.active && state.status !== 'idle' && state.status !== 'lid-closed') {
     const now = Date.now();
     freezeStudyTime(now);
@@ -971,9 +1069,13 @@ function handleCameraTrackEnded() {
  * Both are served locally from /models/ for offline support.
  */
 async function initFaceLandmarker() {
+  updatePipeline('Model', 'loading', '⏳ Model Loading…');
   if (!FaceLandmarker || !FilesetResolver) {
     const loaded = await loadMediaPipeModule();
-    if (!loaded) return false;
+    if (!loaded) {
+      updatePipeline('Model', 'error', '❌ Model Unavailable');
+      return false;
+    }
   }
 
   try {
@@ -995,7 +1097,7 @@ async function initFaceLandmarker() {
     });
 
     console.log('✅ FaceLandmarker initialised');
-    updatePipeline('Model', true);
+    updatePipeline('Model', 'active', '✅ Model Loaded');
     return true;
 
   } catch (err) {
@@ -1003,7 +1105,7 @@ async function initFaceLandmarker() {
     showToast('error', 'Face detection failed',
       'Could not initialise the face detection model. ' + err.message);
     showLiveError('Model failed to load. Check console.');
-    updatePipeline('Model', false);
+    updatePipeline('Model', 'error', '❌ Model Failed');
     return false;
   }
 }
@@ -1260,6 +1362,7 @@ function startDetectionLoop() {
   // Initialise to 0 so the very first frame is processed immediately
   state.camera.lastDetectionTime = 0;
   state.headPose.buffer = [];
+  updatePipeline('Face', 'loading', '⏳ Face Searching…');
 
   function loop() {
     if (!state.camera.isDetecting) return;
@@ -1287,9 +1390,8 @@ function stopDetectionLoop() {
     cancelAnimationFrame(state.camera.detectionRAF);
     state.camera.detectionRAF = null;
   }
-  updatePipeline('Cam', false);
-  updatePipeline('Face', false);
-  updatePipeline('Worker', false);
+  updatePipeline('Face', 'inactive');
+  updatePipeline('Focus', 'inactive');
   console.log('🔍 Detection loop stopped');
 }
 
@@ -1326,8 +1428,12 @@ function runDetection() {
     lastFpsTime = timeNow;
   }
 
-  const faceFound = results.faceLandmarks && results.faceLandmarks.length > 0;
-  updatePipeline('Face', faceFound);
+  const faceFound = Boolean(results.faceLandmarks && results.faceLandmarks.length > 0);
+  if (faceFound) {
+    updatePipeline('Face', 'active', '✅ Face Detected');
+  } else {
+    updatePipeline('Face', 'warn', '👀 No Face');
+  }
   
   // Draw canvas overlay if checked & main tab is active (saves CPU/GPU headroom in background)
   if (DOM.livePreviewCb.checked && !document.hidden) {
@@ -1390,13 +1496,9 @@ function runDetection() {
       // Update pipeline indicator for screen focus with live percentage
       if (DOM.pipeFocus) {
         if (isFacingScreen) {
-          DOM.pipeFocus.textContent = `✅ Facing Screen (${focusScore}%)`;
-          DOM.pipeFocus.classList.add('pipe-ok');
-          DOM.pipeFocus.classList.remove('pipe-warn');
+          updatePipeline('Focus', 'active', `✅ Facing Screen (${focusScore}%)`);
         } else {
-          DOM.pipeFocus.textContent = `👀 Focus Low (${focusScore}% < ${cutoff}%)`;
-          DOM.pipeFocus.classList.remove('pipe-ok');
-          DOM.pipeFocus.classList.add('pipe-warn');
+          updatePipeline('Focus', 'warn', `👀 Focus Low (${focusScore}% < ${cutoff}%)`);
         }
       }
     }
@@ -1414,9 +1516,9 @@ function runDetection() {
     // No face — reset focus indicators
     updateFocusIndicator(null, 0);
     updatePiP(0);
+    updatePipeline('Face', 'warn', '👀 No Face');
     if (DOM.pipeFocus) {
-      DOM.pipeFocus.textContent = '❌ Facing Screen (No Face)';
-      DOM.pipeFocus.classList.remove('pipe-ok', 'pipe-warn');
+      updatePipeline('Focus', 'warn', '❌ Screen (No Face)');
     }
 
     if (state.calibration.isCalibrating) return;
@@ -1713,6 +1815,8 @@ function updateSessionStatsDisplay() {
 function startWorker() {
   if (state.worker) return;
 
+  updatePipeline('Worker', 'loading', '⏳ Worker Starting…');
+
   state.worker = new Worker('./worker.js');
   state.lastTickTimestamp = Date.now();
 
@@ -1720,6 +1824,11 @@ function startWorker() {
     if (e.data.type === 'tick') {
       handleTick(e.data);
     }
+  };
+
+  state.worker.onerror = (err) => {
+    console.error('Worker error:', err);
+    updatePipeline('Worker', 'error', '❌ Worker Error');
   };
 
   state.worker.postMessage('start');
@@ -1735,6 +1844,7 @@ function stopWorker() {
     state.worker.terminate();
     state.worker = null;
   }
+  updatePipeline('Worker', 'inactive');
   console.log('⏱ Worker stopped');
 }
 
@@ -1751,7 +1861,11 @@ function handleTick(data) {
   const now = data.timestamp;
   const gap = data.gap;
   
-  updatePipeline('Worker', true);
+  if (gap > CONFIG.lidGapMs) {
+    updatePipeline('Worker', 'warn', '⚠️ Worker Gap');
+  } else {
+    updatePipeline('Worker', 'active', '✅ Worker Active');
+  }
 
   // ── Detect midnight rollover ──
   // If calendar day changed while tracking, rollover to fresh day
@@ -1921,6 +2035,8 @@ async function handleStart() {
       updateStartButtonLabel();
       return;
     }
+  } else {
+    updatePipeline('Model', 'active', '✅ Model Loaded');
   }
 
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Waiting for Camera…';
