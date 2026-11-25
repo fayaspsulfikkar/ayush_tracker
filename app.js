@@ -113,6 +113,7 @@ const DOM = {
   statusChip: document.getElementById('status-chip'),
   statusText: document.getElementById('status-text'),
   timerDisplay: document.getElementById('timer-display'),
+  timerDrums: document.getElementById('timer-drums'),
   sessionStats: document.getElementById('session-stats'),
   statFocus: document.getElementById('stat-focus') || document.getElementById('home-focus'),
   statDistractions: document.getElementById('stat-distractions') || document.getElementById('home-distractions'),
@@ -1009,6 +1010,94 @@ function formatTime(ms) {
   return [h, m, s].map(n => n.toString().padStart(2, '0')).join(':');
 }
 
+const prevDrumDigitsByKey = { main: null, pip: null };
+
+function buildDrumReelsMarkup() {
+  const mkSlot = (idx, max) => {
+    let spans = '';
+    for (let d = 0; d <= max; d++) spans += `<span>${d}</span>`;
+    spans += '<span>0</span>';
+    return `<div class="drum-slot" data-slot="${idx}" data-max="${max}"><div class="drum-reel">${spans}</div></div>`;
+  };
+  return `
+    <div class="drum-pair">${mkSlot(0, 9)}${mkSlot(1, 9)}</div>
+    <span class="drum-colon">:</span>
+    <div class="drum-pair">${mkSlot(2, 5)}${mkSlot(3, 9)}</div>
+    <span class="drum-colon">:</span>
+    <div class="drum-pair">${mkSlot(4, 5)}${mkSlot(5, 9)}</div>
+  `;
+}
+
+function syncDrumContainer(container, timeStr, key = 'main') {
+  if (!container || typeof container.querySelectorAll !== 'function') return;
+  const digits = String(timeStr || '00:00:00').replace(/\D/g, '').padStart(6, '0').slice(-6);
+  const slots = container.querySelectorAll('.drum-slot');
+  if (!slots || slots.length === 0) return;
+
+  const prevDigits = prevDrumDigitsByKey[key] ?? null;
+  const isFirst = prevDigits === null;
+  slots.forEach((slot, idx) => {
+    const reel = slot.querySelector('.drum-reel');
+    if (!reel) return;
+    const next = Number(digits[idx]) || 0;
+    const prev = isFirst ? next : (Number(prevDigits[idx]) || 0);
+    const max = Number(slot.getAttribute('data-max')) || 9;
+
+    if (slot._wrapTimer) {
+      clearTimeout(slot._wrapTimer);
+      slot._wrapTimer = null;
+    }
+
+    if (isFirst) {
+      reel.classList.remove('rolling');
+      reel.classList.add('no-anim');
+      reel.style.setProperty('--drum-idx', String(next));
+      return;
+    }
+
+    if (next === prev) return;
+
+    // Roll upwards continuously: increment or wrap max -> duplicate 0 -> snap silently to 0
+    if (next === prev + 1) {
+      reel.classList.remove('no-anim');
+      reel.classList.add('rolling');
+      reel.style.setProperty('--drum-idx', String(next));
+    } else if (prev === max && next === 0) {
+      reel.classList.remove('no-anim');
+      reel.classList.add('rolling');
+      reel.style.setProperty('--drum-idx', String(max + 1));
+      slot._wrapTimer = setTimeout(() => {
+        reel.classList.remove('rolling');
+        reel.classList.add('no-anim');
+        reel.style.setProperty('--drum-idx', '0');
+        void reel.offsetHeight;
+        reel.classList.remove('no-anim');
+        slot._wrapTimer = null;
+      }, 370);
+      if (slot._wrapTimer && typeof slot._wrapTimer.unref === 'function') {
+        slot._wrapTimer.unref();
+      }
+    } else {
+      reel.classList.remove('rolling');
+      reel.classList.add('no-anim');
+      reel.style.setProperty('--drum-idx', String(next));
+      void reel.offsetHeight;
+      reel.classList.remove('no-anim');
+    }
+  });
+  prevDrumDigitsByKey[key] = digits;
+}
+
+function updateTimerDrums(timeStr) {
+  const container = DOM.timerDrums || (typeof document !== 'undefined' ? document.getElementById('timer-drums') : null);
+  syncDrumContainer(container, timeStr, 'main');
+}
+
+function setTimerDisplay(timeStr) {
+  if (DOM.timerDisplay) DOM.timerDisplay.textContent = timeStr;
+  updateTimerDrums(timeStr);
+}
+
 /** Format milliseconds as human-readable duration like "2h 34m" */
 function formatDuration(ms) {
   const totalMin = Math.floor(ms / 60000);
@@ -1082,16 +1171,22 @@ function setStatus(status, text) {
   if (DOM.liveStatusChip) DOM.liveStatusChip.setAttribute('data-status', status);
   if (DOM.liveStatusText) DOM.liveStatusText.textContent = displayText;
 
-  // Timer display styling
-  if (status === 'studying') {
-    DOM.timerDisplay.classList.add('active');
-    DOM.timerDisplay.classList.remove('paused');
-  } else if (['looking-away', 'away', 'lid-closed'].includes(status)) {
-    DOM.timerDisplay.classList.remove('active');
-    DOM.timerDisplay.classList.add('paused');
+  // Timer display & mechanical rolling-drum styling
+  [DOM.timerDisplay, DOM.timerDrums].forEach((el) => {
+    if (!el || !el.classList) return;
+    if (status === 'studying') {
+      el.classList.add('active');
+      el.classList.remove('paused');
+    } else if (['looking-away', 'away', 'lid-closed'].includes(status)) {
+      el.classList.remove('active');
+      el.classList.add('paused');
+    } else {
+      el.classList.remove('active', 'paused');
+    }
+  });
+  if (['looking-away', 'away', 'lid-closed'].includes(status)) {
     if (DOM.signalBars) DOM.signalBars.setAttribute('data-level', '1');
-  } else {
-    DOM.timerDisplay.classList.remove('active', 'paused');
+  } else if (status !== 'studying') {
     if (DOM.signalBars) DOM.signalBars.setAttribute('data-level', '0');
   }
 
@@ -2683,7 +2778,7 @@ function handleTick(data) {
         state.session.pausedTime || 0,
         calculateTotalPausedTime(state.session.pauses, now)
       );
-      DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+      setTimerDisplay(formatTime(state.session.studyTime));
       updateSessionStatsDisplay();
       updatePiP();
       saveTodayToLocalStorage(now);
@@ -2945,7 +3040,7 @@ function handleTick(data) {
     const computedPaused = calculateTotalPausedTime(state.session.pauses, now);
     state.session.pausedTime = Math.max(state.session.pausedTime || 0, computedPaused);
 
-    DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+    setTimerDisplay(formatTime(state.session.studyTime));
     updateSessionStatsDisplay();
     updatePiP();
     refreshTabLock();
@@ -3127,7 +3222,7 @@ function handleMidnightRollover(now, newDateStr, sleepAnchor = null, stallContex
     schemaVersion: 2,
   };
 
-  DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+  setTimerDisplay(formatTime(state.session.studyTime));
   updateSessionStatsDisplay();
   saveTodayToLocalStorage(now);
   autoSaveSession();
@@ -3464,7 +3559,7 @@ async function handleStart() {
   DOM.startBtn.classList.add('hidden');
   DOM.endBtn.classList.remove('hidden');
   if (DOM.sessionStats) DOM.sessionStats.classList.add('visible');
-  DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+  setTimerDisplay(formatTime(state.session.studyTime));
   if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
   if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime);
   setStatus('studying');
@@ -3551,7 +3646,7 @@ function handleEnd(endTime = Date.now(), endMonotonic = null) {
   if (DOM.sessionStats) DOM.sessionStats.classList.remove('visible');
   if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(finalSessionTime);
   if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(finalPausedTime);
-  DOM.timerDisplay.textContent = formatTime(finalStudyTime);
+  setTimerDisplay(formatTime(finalStudyTime));
   setStatus('idle');
   hideAlert();
   updateStartButtonLabel();
@@ -3903,7 +3998,7 @@ function loadTodayState() {
         state.session.unverifiedStartedAt = null;
         state.session.schemaVersion = 2;
 
-        DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+        setTimerDisplay(formatTime(state.session.studyTime));
         if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime || 0);
         if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime || 0);
         updateStartButtonLabel();
@@ -3938,7 +4033,7 @@ function loadTodayState() {
     state.session.distractions = { lookAway: 0, away: 0, lidClosed: 0 };
     state.session.pauses = [];
     state.session.schemaVersion = 2;
-    DOM.timerDisplay.textContent = '00:00:00';
+    setTimerDisplay('00:00:00');
     if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
     if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
     updateStartButtonLabel();
@@ -5090,26 +5185,64 @@ async function togglePiP() {
       .pip-bracket.bl { bottom: 4px; left: 5px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
       .pip-bracket.br { bottom: 4px; right: 5px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
       .pip-timer {
+        --drum-h: clamp(1.45rem, min(40cqh, 14.5cqw), 4.2rem);
+        --drum-w: clamp(0.95rem, min(26cqh, 9.6cqw), 2.85rem);
         font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-variant-numeric: tabular-nums;
         font-feature-settings: 'tnum' 1, 'zero' 1;
-        font-size: clamp(1.15rem, min(42cqh, 15.5cqw), 4.6rem);
-        font-weight: 500; letter-spacing: 0.06em; line-height: 1;
-        color: #E8E7DF;
-        text-shadow:
-          0 -1px 0 rgba(255, 255, 255, 0.45),
-          0 1px 0 rgba(120, 120, 112, 0.55),
-          0 2px 3px rgba(0, 0, 0, 0.9);
-        text-align: center; white-space: nowrap;
+        display: inline-flex; align-items: center; justify-content: center;
+        gap: clamp(2px, 1.2cqw, 6px);
+        padding: 0; border: none; background: transparent; box-shadow: none;
+        user-select: none;
       }
-      .pip-root[data-status="looking-away"] .pip-timer,
-      .pip-root[data-status="away"] .pip-timer,
-      .pip-root[data-status="lid-closed"] .pip-timer {
+      .pip-timer .drum-pair { display: inline-flex; align-items: center; gap: clamp(2px, 0.8cqw, 4px); }
+      .pip-timer .drum-slot {
+        position: relative; width: var(--drum-w); height: var(--drum-h); overflow: hidden; border-radius: 4px;
+        background: linear-gradient(180deg, #131412 0%, #242622 24%, #2E302B 50%, #20221E 76%, #111210 100%);
+        border: 1px solid #44463F;
+        box-shadow: inset 0 4px 7px rgba(0, 0, 0, 0.85), inset 0 -4px 7px rgba(0, 0, 0, 0.85), 0 1px 1px rgba(0, 0, 0, 0.65);
+      }
+      .pip-timer .drum-slot::before {
+        content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.72) 0%, rgba(255, 255, 255, 0.08) 26%, rgba(255, 255, 255, 0.02) 49%, rgba(0, 0, 0, 0.16) 51%, rgba(0, 0, 0, 0.72) 100%);
+      }
+      .pip-timer .drum-slot::after {
+        content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; pointer-events: none; z-index: 3;
+        background: rgba(0, 0, 0, 0.45); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07);
+      }
+      .pip-timer .drum-reel {
+        display: flex; flex-direction: column; will-change: transform;
+        transform: translate3d(0, calc(-1 * var(--drum-idx, 0) * var(--drum-h)), 0);
+      }
+      .pip-timer .drum-reel.rolling { transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1); }
+      .pip-timer .drum-reel.no-anim { transition: none !important; }
+      .pip-timer .drum-reel > span {
+        width: 100%; height: var(--drum-h); flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: calc(var(--drum-h) * 0.68); font-weight: 600; line-height: 1;
+        color: #E8E7DF;
+        text-shadow: 0 -1px 0 rgba(255, 255, 255, 0.45), 0 1px 0 rgba(120, 120, 112, 0.55), 0 2px 3px rgba(0, 0, 0, 0.9);
+      }
+      .pip-root[data-status="studying"] .pip-timer .drum-reel > span {
+        color: #F4F3ED;
+        text-shadow: 0 -1px 0 rgba(255, 255, 255, 0.55), 0 1px 0 rgba(132, 132, 122, 0.55), 0 2px 3px rgba(0, 0, 0, 0.92);
+      }
+      .pip-root[data-status="looking-away"] .pip-timer .drum-reel > span,
+      .pip-root[data-status="away"] .pip-timer .drum-reel > span,
+      .pip-root[data-status="lid-closed"] .pip-timer .drum-reel > span {
         color: #F07346;
-        text-shadow:
-          0 -1px 0 rgba(255, 198, 174, 0.4),
-          0 1px 0 rgba(130, 42, 12, 0.7),
-          0 2px 3px rgba(0, 0, 0, 0.9);
+        text-shadow: 0 -1px 0 rgba(255, 198, 174, 0.4), 0 1px 0 rgba(130, 42, 12, 0.7), 0 2px 3px rgba(0, 0, 0, 0.9);
+      }
+      .pip-timer .drum-colon {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: var(--drum-h); font-size: calc(var(--drum-h) * 0.54); font-weight: 600; line-height: 1;
+        color: #B4B3AB; text-shadow: 0 -1px 0 rgba(255, 255, 255, 0.3), 0 2px 3px rgba(0, 0, 0, 0.9);
+      }
+      .pip-root[data-status="looking-away"] .pip-timer .drum-colon,
+      .pip-root[data-status="away"] .pip-timer .drum-colon,
+      .pip-root[data-status="lid-closed"] .pip-timer .drum-colon { color: #E86233; }
+      @media (prefers-reduced-motion: reduce) {
+        .pip-timer .drum-reel.rolling { transition: none !important; }
       }
       .pip-alert-banner {
         width: 100%; display: none; align-items: center; justify-content: center; gap: 5px;
@@ -5129,8 +5262,8 @@ async function togglePiP() {
         .pip-root { flex-direction: row; align-items: center; padding: 5px 8px; gap: 8px; }
         .pip-screw { display: none; }
         .pip-header { width: auto; flex-direction: column; align-items: flex-start; gap: 3px; padding: 0; }
-        .pip-console { height: 100%; padding: 4px 10px; }
-        .pip-timer { font-size: clamp(1rem, min(52cqh, 14cqw), 2.1rem); }
+        .pip-console { height: 100%; padding: 4px 8px; }
+        .pip-timer { --drum-h: clamp(1.1rem, min(58cqh, 11cqw), 2.2rem); --drum-w: clamp(0.75rem, min(38cqh, 7.2cqw), 1.5rem); }
         .pip-alert-banner { position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10; background: #161614; }
       }
       .pip-root[data-layout="compact-row"] {
@@ -5140,13 +5273,15 @@ async function togglePiP() {
       .pip-root[data-layout="compact-row"] .pip-header {
         width: auto; flex-direction: column; align-items: flex-start; gap: 3px; padding: 0;
       }
-      .pip-root[data-layout="compact-row"] .pip-console { height: 100%; padding: 4px 10px; }
+      .pip-root[data-layout="compact-row"] .pip-console { height: 100%; padding: 4px 8px; }
+      .pip-root[data-layout="compact-row"] .pip-timer { --drum-h: clamp(1.1rem, min(58cqh, 11cqw), 2.2rem); --drum-w: clamp(0.75rem, min(38cqh, 7.2cqw), 1.5rem); }
       .pip-root[data-layout="compact-row"] .pip-alert-banner {
         position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10; background: #161614;
       }
     `;
     state.pipWindow.document.head.appendChild(customStyle);
 
+    prevDrumDigitsByKey.pip = null;
     state.pipWindow.document.body.innerHTML = `
       <div id="pip-container" class="pip-root" data-status="${escapeHtml(state.status)}">
         <span class="pip-screw tl" aria-hidden="true"></span>
@@ -5167,7 +5302,7 @@ async function togglePiP() {
           <span class="pip-bracket bl" aria-hidden="true"></span>
           <span class="pip-bracket br" aria-hidden="true"></span>
           <div id="pip-timer" class="pip-timer" data-status="${escapeHtml(state.status)}">
-            ${escapeHtml(DOM.timerDisplay.textContent)}
+            ${buildDrumReelsMarkup()}
           </div>
         </div>
 
@@ -5200,6 +5335,7 @@ async function togglePiP() {
 
     state.pipWindow.addEventListener('pagehide', () => {
       state.pipWindow = null;
+      prevDrumDigitsByKey.pip = null;
       if (DOM.pipBtn) DOM.pipBtn.classList.remove('pip-active');
       if (DOM.hwPipBtn) DOM.hwPipBtn.classList.remove('active');
     });
@@ -5237,7 +5373,7 @@ function updatePiP(focusScore) {
   if (chipEl) chipEl.setAttribute('data-status', state.status);
 
   if (timerEl) {
-    timerEl.textContent = DOM.timerDisplay.textContent;
+    syncDrumContainer(timerEl, DOM.timerDisplay ? DOM.timerDisplay.textContent : '00:00:00', 'pip');
     timerEl.setAttribute('data-status', state.status);
   }
 
@@ -5427,7 +5563,7 @@ async function handleDeleteAll() {
       state.lastTick = 0;
 
       // 7. Reset UI displays and buttons
-      if (DOM.timerDisplay) DOM.timerDisplay.textContent = '00:00:00';
+      setTimerDisplay('00:00:00');
       if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
       if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
       if (DOM.startBtn) {
@@ -5632,7 +5768,7 @@ function init() {
           state.session.pauses = merged.pauses;
           state.session.lastSaved = merged.lastSaved;
           state.session.schemaVersion = 2;
-          if (DOM.timerDisplay) DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+          setTimerDisplay(formatTime(state.session.studyTime));
           if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime || 0);
           if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime || 0);
           updateStartButtonLabel();
@@ -5742,6 +5878,7 @@ if (typeof module !== 'undefined' && module.exports) {
     showToast,
     dismissToast,
     setStatus,
+    setTimerDisplay,
     openSettings,
     closeSettings,
     cancelCalibration,

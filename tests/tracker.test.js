@@ -39,6 +39,7 @@ const {
   showToast,
   dismissToast,
   setStatus,
+  setTimerDisplay,
   openSettings,
   closeSettings,
   cancelCalibration,
@@ -3236,6 +3237,53 @@ describe('Hardware Instrument & Toast Controls', () => {
       drawer.open = prevOpen;
       state.session.active = prevActive;
       setStatus('idle');
+    }
+  });
+
+  test('setTimerDisplay updates timerDisplay textContent and rolls mechanical drum slots upwards', () => {
+    const slots = [9, 9, 5, 9, 5, 9].map((maxVal) => {
+      const vars = {};
+      const reel = {
+        classes: new Set(),
+        classList: {
+          add(c) { reel.classes.add(c); },
+          remove(c) { reel.classes.delete(c); },
+          contains(c) { return reel.classes.has(c); },
+        },
+        style: {
+          setProperty(k, v) { vars[k] = v; },
+          getPropertyValue(k) { return vars[k]; },
+        },
+        offsetHeight: 0,
+      };
+      return {
+        getAttribute(k) { return k === 'data-max' ? String(maxVal) : ''; },
+        querySelector(sel) { return sel === '.drum-reel' ? reel : null; },
+        reel,
+      };
+    });
+    const prevDrums = DOM.timerDrums;
+    DOM.timerDrums = {
+      querySelectorAll(sel) { return sel === '.drum-slot' ? slots : []; },
+      classList: DOM.timerDisplay.classList,
+    };
+
+    try {
+      setTimerDisplay('00:00:09');
+      assert.equal(DOM.timerDisplay.textContent, '00:00:09');
+      assert.equal(slots[5].reel.style.getPropertyValue('--drum-idx'), '9');
+
+      // Rolling 09 -> 10: tens seconds increments (0->1), units seconds wraps upward (9 -> 10)
+      setTimerDisplay('00:00:10');
+      assert.equal(DOM.timerDisplay.textContent, '00:00:10');
+      assert.equal(slots[4].reel.style.getPropertyValue('--drum-idx'), '1');
+      assert.equal(slots[4].reel.classList.contains('rolling'), true);
+      assert.equal(slots[5].reel.style.getPropertyValue('--drum-idx'), '10');
+      assert.equal(slots[5].reel.classList.contains('rolling'), true);
+    } finally {
+      slots.forEach((s) => { if (s._wrapTimer) clearTimeout(s._wrapTimer); });
+      DOM.timerDrums = prevDrums;
+      setTimerDisplay('00:00:00');
     }
   });
 });
