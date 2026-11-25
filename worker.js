@@ -17,6 +17,7 @@
 
 let intervalId = null;
 let lastTick = 0;
+let lastMonotonic = 0;
 
 /**
  * Listen for commands from the main thread.
@@ -30,27 +31,37 @@ self.onmessage = function (e) {
     if (intervalId) clearInterval(intervalId);
 
     lastTick = Date.now();
+    const startMonotonic = typeof performance !== 'undefined' ? performance.now() : lastTick;
+    lastMonotonic = startMonotonic;
 
     // Send a tick every 1000ms
     intervalId = setInterval(() => {
       const now = Date.now();
+      const monotonicNow = typeof performance !== 'undefined' ? performance.now() : now;
+      const monotonicGap = typeof performance !== 'undefined'
+        ? (monotonicNow - lastMonotonic)
+        : (now - lastTick);
 
       self.postMessage({
         type: 'tick',
         timestamp: now,
-        // The gap between ticks. Normally ~1000ms.
-        // If it's much larger, the laptop was probably asleep.
-        gap: now - lastTick,
+        monotonic: monotonicNow,
+        // Prefer monotonic elapsed time so wall-clock adjustments don't mimic sleep gaps.
+        gap: monotonicGap,
+        wallGap: now - lastTick,
       });
 
       lastTick = now;
+      lastMonotonic = monotonicNow;
     }, 1000);
 
     // Send the first tick immediately
     self.postMessage({
       type: 'tick',
       timestamp: lastTick,
+      monotonic: startMonotonic,
       gap: 0,
+      wallGap: 0,
     });
   }
 

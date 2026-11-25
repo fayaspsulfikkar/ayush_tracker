@@ -12,6 +12,214 @@
 
 'use strict';
 
+// ── Node.js / Headless Test Environment Shim ──
+if (typeof globalThis !== 'undefined' && typeof globalThis.document === 'undefined') {
+  const createDummyEl = () => {
+    const el = {
+      textContent: '',
+      innerHTML: '',
+      style: {},
+      classes: new Set(),
+      children: [],
+      childNodes: [],
+      classList: {
+        add(c) { el.classes.add(c); },
+        remove(c) { el.classes.delete(c); },
+        toggle(c) { el.classes.has(c) ? el.classes.delete(c) : el.classes.add(c); },
+        contains(c) { return el.classes.has(c); }
+      },
+      addEventListener: () => { },
+      removeEventListener: () => { },
+      appendChild(c) { el.children.push(c); return c; },
+      removeChild(c) {
+        const i = el.children.indexOf(c);
+        if (i >= 0) el.children.splice(i, 1);
+        return c;
+      },
+      prepend(c) { el.children.unshift(c); },
+      remove() { },
+      setAttribute: () => { },
+      getAttribute: () => '',
+      removeAttribute: () => { },
+      querySelector: () => createDummyEl(),
+      querySelectorAll: () => [],
+      value: '',
+      checked: false,
+      disabled: false,
+      focus: () => { },
+      blur: () => { },
+    };
+    Object.defineProperty(el, 'lastChild', {
+      get() { return el.children[el.children.length - 1] || null; }
+    });
+    Object.defineProperty(el, 'firstChild', {
+      get() { return el.children[0] || null; }
+    });
+    return el;
+  };
+
+  globalThis.document = {
+    getElementById: () => createDummyEl(),
+    querySelector: () => createDummyEl(),
+    querySelectorAll: () => [],
+    createElement: () => createDummyEl(),
+    addEventListener: () => { },
+    removeEventListener: () => { },
+    documentElement: { setAttribute: () => { }, getAttribute: () => 'light', classList: { add: () => { }, remove: () => { } } },
+    body: { appendChild: () => { }, removeChild: () => { }, classList: { add: () => { }, remove: () => { } } },
+    readyState: 'complete',
+    styleSheets: [],
+  };
+}
+if (typeof globalThis !== 'undefined' && typeof globalThis.window === 'undefined') {
+  globalThis.window = {
+    addEventListener: () => { },
+    removeEventListener: () => { },
+    location: { search: '' },
+    localStorage: {
+      _data: {},
+      getItem(k) { return this._data[k] || null; },
+      setItem(k, v) { this._data[k] = String(v); },
+      removeItem(k) { delete this._data[k]; },
+      clear() { this._data = {}; }
+    }
+  };
+  globalThis.localStorage = globalThis.window.localStorage;
+}
+if (typeof globalThis !== 'undefined' && typeof globalThis.navigator === 'undefined') {
+  globalThis.navigator = {
+    userAgent: 'node',
+    serviceWorker: { register: () => Promise.resolve() }
+  };
+}
+if (typeof globalThis !== 'undefined' && typeof globalThis.confirm === 'undefined') {
+  globalThis.confirm = () => true;
+}
+if (typeof globalThis !== 'undefined' && typeof globalThis.indexedDB === 'undefined') {
+  const mockStores = new Map();
+  const rwQueues = new Map();
+  const getStoreMap = (storeName) => {
+    if (!mockStores.has(storeName)) mockStores.set(storeName, new Map());
+    return mockStores.get(storeName);
+  };
+  const enqueueRw = (key, fn) => {
+    const prev = rwQueues.get(key) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    rwQueues.set(key, next);
+    return next;
+  };
+  globalThis.indexedDB = {
+    open(name, version) {
+      const req = {
+        onsuccess: null,
+        onerror: null,
+        onupgradeneeded: null,
+        result: {
+          name,
+          version,
+          objectStoreNames: { contains: () => true },
+          createObjectStore(storeName) {
+            getStoreMap(storeName);
+            return { createIndex: () => { } };
+          },
+          transaction(stores, mode) {
+            const storeList = Array.isArray(stores) ? stores : [stores];
+            const primaryStore = storeList[0] || 'sessions';
+            const tx = {
+              oncomplete: null,
+              onerror: null,
+              onabort: null,
+              _pending: 0,
+              _ready: false,
+              _aborted: false,
+              _scheduleFinish() {
+                if (tx._ready && tx._pending === 0 && !tx._aborted) {
+                  if (tx.oncomplete) tx.oncomplete();
+                }
+              },
+              abort() {
+                tx._aborted = true;
+                if (tx.onabort) tx.onabort();
+              },
+              objectStore(storeName) {
+                const storeMap = getStoreMap(storeName);
+                const runOp = (exec) => {
+                  const r = { onsuccess: null, onerror: null, result: undefined };
+                  tx._pending++;
+                  const execute = () => {
+                    if (tx._aborted) {
+                      tx._pending--;
+                      return;
+                    }
+                    try {
+                      r.result = exec();
+                      if (r.onsuccess) r.onsuccess({ target: r });
+                    } catch (err) {
+                      r.error = err;
+                      tx.error = err;
+                      if (r.onerror) r.onerror({ target: r });
+                      if (tx.onerror) tx.onerror({ target: r });
+                    } finally {
+                      tx._pending--;
+                      tx._scheduleFinish();
+                    }
+                  };
+                  if (mode === 'readwrite') {
+                    tx._gate.then(() => setTimeout(execute, 0));
+                  } else {
+                    setTimeout(execute, 0);
+                  }
+                  return r;
+                };
+                return {
+                  get(key) { return runOp(() => storeMap.get(key) ?? null); },
+                  getAll() { return runOp(() => Array.from(storeMap.values())); },
+                  put(val) { return runOp(() => { storeMap.set(val.id, val); return val.id; }); },
+                  delete(key) { return runOp(() => { storeMap.delete(key); return undefined; }); },
+                  clear() { return runOp(() => { storeMap.clear(); return undefined; }); },
+                  count() { return runOp(() => storeMap.size); },
+                };
+              }
+            };
+            if (mode === 'readwrite') {
+              let unlockTx;
+              const gateDone = new Promise((res) => { unlockTx = res; });
+              let startResolve;
+              tx._gate = new Promise((res) => { startResolve = res; });
+              enqueueRw(primaryStore, () => {
+                startResolve();
+                return gateDone;
+              });
+              const origFinish = tx._scheduleFinish;
+              tx._scheduleFinish = () => {
+                if (tx._ready && tx._pending === 0) {
+                  unlockTx();
+                }
+                origFinish();
+              };
+              const origAbort = tx.abort;
+              tx.abort = () => {
+                unlockTx();
+                origAbort();
+              };
+              setTimeout(() => { tx._ready = true; tx._scheduleFinish(); }, 0);
+            } else {
+              tx._gate = Promise.resolve();
+              setTimeout(() => { tx._ready = true; tx._scheduleFinish(); }, 0);
+            }
+            return tx;
+          },
+          close() { }
+        }
+      };
+      setTimeout(() => {
+        if (req.onsuccess) req.onsuccess({ target: req });
+      }, 0);
+      return req;
+    }
+  };
+}
+
 // ═══════════════════════════════════════════════
 // 0. MEDIAPIPE IMPORTS (loaded dynamically)
 // ═══════════════════════════════════════════════
@@ -47,79 +255,79 @@ async function loadMediaPipeModule() {
 
 const DOM = {
   // Privacy modal
-  privacyModal:      document.getElementById('privacy-modal'),
-  privacyAcceptBtn:  document.getElementById('privacy-accept-btn'),
+  privacyModal: document.getElementById('privacy-modal'),
+  privacyAcceptBtn: document.getElementById('privacy-accept-btn'),
 
   // Calibration
-  calibrationOverlay:    document.getElementById('calibration-overlay'),
+  calibrationOverlay: document.getElementById('calibration-overlay'),
   calibrationProgressBar: document.getElementById('calibration-progress-bar'),
-  calibrationCountdown:  document.getElementById('calibration-countdown'),
-  calibrationSubstatus:  document.getElementById('calibration-substatus'),
+  calibrationCountdown: document.getElementById('calibration-countdown'),
+  calibrationSubstatus: document.getElementById('calibration-substatus'),
 
   // Header
   cameraIndicator: document.getElementById('camera-indicator'),
-  pipBtn:          document.getElementById('pip-btn'),
-  themeToggle:     document.getElementById('theme-toggle'),
-  settingsBtn:     document.getElementById('settings-btn') || document.getElementById('nav-settings'),
+  pipBtn: document.getElementById('pip-btn'),
+  themeToggle: document.getElementById('theme-toggle'),
+  settingsBtn: document.getElementById('settings-btn') || document.getElementById('nav-settings'),
 
   // Navigation
-  navHome:      document.getElementById('nav-home'),
-  navHistory:   document.getElementById('nav-history'),
-  navSettings:  document.getElementById('nav-settings'),
-  tabTimer:     document.getElementById('nav-home') || document.getElementById('tab-timer'),
+  navHome: document.getElementById('nav-home'),
+  navHistory: document.getElementById('nav-history'),
+  navSettings: document.getElementById('nav-settings'),
+  tabTimer: document.getElementById('nav-home') || document.getElementById('tab-timer'),
   tabDashboard: document.getElementById('nav-history') || document.getElementById('tab-dashboard'),
 
   // Views
-  homeView:       document.getElementById('home-view'),
-  historyView:    document.getElementById('history-view'),
-  timerView:      document.getElementById('home-view') || document.getElementById('timer-view'),
-  dashboardView:  document.getElementById('history-view') || document.getElementById('dashboard-view'),
+  homeView: document.getElementById('home-view'),
+  historyView: document.getElementById('history-view'),
+  timerView: document.getElementById('home-view') || document.getElementById('timer-view'),
+  dashboardView: document.getElementById('history-view') || document.getElementById('dashboard-view'),
 
   // Hero Card
-  statusChip:     document.getElementById('status-chip'),
-  statusText:     document.getElementById('status-text'),
-  timerDisplay:   document.getElementById('timer-display'),
-  sessionStats:   document.getElementById('session-stats'),
-  statFocus:      document.getElementById('stat-focus') || document.getElementById('home-focus'),
+  statusChip: document.getElementById('status-chip'),
+  statusText: document.getElementById('status-text'),
+  timerDisplay: document.getElementById('timer-display'),
+  sessionStats: document.getElementById('session-stats'),
+  statFocus: document.getElementById('stat-focus') || document.getElementById('home-focus'),
   statDistractions: document.getElementById('stat-distractions') || document.getElementById('home-distractions'),
   statSessionTime: document.getElementById('stat-session-time'),
   statPausedTime: document.getElementById('stat-paused-time'),
-  startBtn:       document.getElementById('start-btn'),
-  endBtn:         document.getElementById('end-btn'),
+  startBtn: document.getElementById('start-btn'),
+  endBtn: document.getElementById('end-btn'),
   cameraPreviewContainer: document.getElementById('camera-preview-container'),
-  cameraPreview:  document.getElementById('live-video'),
-  alertCard:      document.getElementById('alert-card'),
-  alertIcon:      document.getElementById('alert-icon'),
-  alertText:      document.getElementById('alert-text'),
+  cameraPreview: document.getElementById('live-video'),
+  alertCard: document.getElementById('alert-card'),
+  alertIcon: document.getElementById('alert-icon'),
+  alertText: document.getElementById('alert-text'),
 
   // Home Summary & Progress
-  homeStudyTime:      document.getElementById('home-study-time'),
-  homeFocus:          document.getElementById('home-focus'),
-  homeDistractions:   document.getElementById('home-distractions'),
-  goalProgressText:   document.getElementById('goal-progress-text'),
-  goalProgressBar:    document.getElementById('goal-progress-bar'),
-  homeStreakBadge:    document.getElementById('home-streak-badge'),
-  homeRecentEvents:   document.getElementById('home-recent-events'),
+  homeStudyTime: document.getElementById('home-study-time'),
+  homeFocus: document.getElementById('home-focus'),
+  homeDistractions: document.getElementById('home-distractions'),
+  goalProgressText: document.getElementById('goal-progress-text'),
+  goalProgressBar: document.getElementById('goal-progress-bar'),
+  homeStreakBadge: document.getElementById('home-streak-badge'),
+  homeRecentEvents: document.getElementById('home-recent-events'),
   homeRecentSessions: document.getElementById('home-recent-sessions'),
 
   // History / Dashboard view
-  dashStudyTime:   document.getElementById('dash-study-time'),
-  dashFocus:       document.getElementById('dash-focus'),
+  dashStudyTime: document.getElementById('dash-study-time'),
+  dashFocus: document.getElementById('dash-focus'),
   dashDistractions: document.getElementById('dash-distractions'),
-  distLookAway:    document.getElementById('dist-look-away'),
-  distAway:        document.getElementById('dist-away'),
-  distLid:         document.getElementById('dist-lid'),
-  weeklyTotal:     document.getElementById('weekly-total'),
-  chartContainer:  document.getElementById('chart-container'),
+  distLookAway: document.getElementById('dist-look-away'),
+  distAway: document.getElementById('dist-away'),
+  distLid: document.getElementById('dist-lid'),
+  weeklyTotal: document.getElementById('weekly-total'),
+  chartContainer: document.getElementById('chart-container'),
   dailyGoalDisplay: document.getElementById('daily-goal-display'),
-  streakBadge:     document.getElementById('streak-badge') || document.getElementById('home-streak-badge'),
-  sessionList:     document.getElementById('session-list'),
-  exportCsvBtn:    document.getElementById('export-csv-btn'),
-  deleteAllBtn:    document.getElementById('delete-all-btn'),
+  streakBadge: document.getElementById('streak-badge') || document.getElementById('home-streak-badge'),
+  sessionList: document.getElementById('session-list'),
+  exportCsvBtn: document.getElementById('export-csv-btn'),
+  deleteAllBtn: document.getElementById('delete-all-btn'),
 
   // Settings
-  settingsOverlay:  document.getElementById('settings-overlay'),
-  settingsPanel:    document.getElementById('settings-panel'),
+  settingsOverlay: document.getElementById('settings-overlay'),
+  settingsPanel: document.getElementById('settings-panel'),
   settingsCloseBtn: document.getElementById('settings-close-btn'),
 
   // LIVE PANEL
@@ -150,20 +358,20 @@ const DOM = {
   liveFocusThresholdTag: document.getElementById('live-focus-threshold-tag'),
   settingFocusThreshold: document.getElementById('setting-focus-threshold'),
   settingFocusThresholdVal: document.getElementById('setting-focus-threshold-val'),
-  recalibrateBtn:       document.getElementById('recalibrate-btn'),
-  settingSensitivity:   document.getElementById('setting-sensitivity'),
-  settingLookawayTime:  document.getElementById('setting-lookaway-time'),
-  settingAwayTime:      document.getElementById('setting-away-time'),
-  settingReadingMode:   document.getElementById('setting-reading-mode'),
-  settingDailyGoal:     document.getElementById('setting-daily-goal'),
-  settingSound:         document.getElementById('setting-sound'),
-  settingVolume:        document.getElementById('setting-volume'),
+  recalibrateBtn: document.getElementById('recalibrate-btn'),
+  settingSensitivity: document.getElementById('setting-sensitivity'),
+  settingLookawayTime: document.getElementById('setting-lookaway-time'),
+  settingAwayTime: document.getElementById('setting-away-time'),
+  settingReadingMode: document.getElementById('setting-reading-mode'),
+  settingDailyGoal: document.getElementById('setting-daily-goal'),
+  settingSound: document.getElementById('setting-sound'),
+  settingVolume: document.getElementById('setting-volume'),
   settingNotifications: document.getElementById('setting-notifications'),
   settingCameraPreview: document.getElementById('setting-camera-preview'),
 
   // Install prompt
-  installPrompt:    document.getElementById('install-prompt'),
-  installBtn:       document.getElementById('install-btn'),
+  installPrompt: document.getElementById('install-prompt'),
+  installBtn: document.getElementById('install-btn'),
   installDismissBtn: document.getElementById('install-dismiss-btn'),
 
   // Toast
@@ -207,7 +415,18 @@ const state = {
     faceLandmarker: null,      // MediaPipe FaceLandmarker instance
     isDetecting: false,        // is the detection loop running?
     detectionRAF: null,        // requestAnimationFrame ID
-    lastDetectionTime: 0,      // for throttling to ~5fps
+    lastAttemptTime: 0,        // wall-clock ms of last detection attempt
+    lastFrameTime: 0,          // wall-clock ms of last successful detectForVideo frame
+    lastFaceTime: 0,           // wall-clock ms of last valid face-detection result
+    lastAttemptMonotonic: null, // monotonic ms of last detection attempt
+    lastFrameMonotonic: null,  // monotonic ms of last successful frame
+    lastFaceMonotonic: null,   // monotonic ms of last valid face result
+    lastDetectionTime: 0,      // legacy alias kept in sync ONLY with lastFrameTime
+    frameSeq: 0,               // increments on every successful frame processing
+    _lastLoopTime: 0,          // internal ~5fps throttle timestamp (never implies health)
+    _lastTickFrameSeq: 0,      // frameSeq observed on last worker tick
+    _msSinceLastFrame: 0,      // monotonic elapsed ms since last successful frame
+    _suspensionDetected: false, // set if inter-frame camera blackout exceeded lidGapMs
   },
 
   // ── Calibration (Step 2) ──
@@ -232,8 +451,11 @@ const state = {
     // Timestamps for state transitions
     lastFaceSeen: 0,           // when we last saw a face
     lookAwayStart: 0,          // when the user started looking away
+    lookAwayStartMono: null,   // monotonic ms when lookAway began
     awayStart: 0,              // when the face was last lost
+    awayStartMono: null,       // monotonic ms when away began
     facingScreenSince: 0,      // when the user started facing the screen again
+    facingScreenSinceMono: null,
   },
 
   // ── Session data (Daily Cumulative) ──
@@ -242,21 +464,31 @@ const state = {
     id: null,                  // 'day_' + dateStr (e.g. 'day_2026-10-13')
     dateStr: null,             // 'YYYY-MM-DD'
     startTime: null,
-    studyStartedAt: null,      // wall-clock ms when the current study run began (null when paused)
+    endTime: null,
+    studyStartedAt: null,      // wall-clock ms when the current study run began (null when paused or stalled)
+    studyCursorMono: null,     // monotonic ms cursor for current studying run
     sessionStartedAt: null,    // wall-clock ms when current tracking segment began
+    unverifiedStartedAt: null, // wall-clock ms when current stall/unverified interval began
+    unverifiedCursorMono: null,// monotonic ms cursor for current unverified run
     accStudyMs: 0,             // study ms accumulated for today before current active run
-    accSessionMs: 0,           // tracking ms accumulated for today before current segment
+    accSessionMs: 0,           // legacy field kept for backward compatibility
+    accUnverifiedMs: 0,        // unverified ms accumulated for today before current stall
+    studyRunMs: 0,             // monotonic ms accumulated in the current active studying run
+    unverifiedRunMs: 0,        // monotonic ms accumulated in the current active unverified run
     studyTime: 0,              // total study ms today
-    sessionTime: 0,            // total active tracking ms today
-    unverifiedTime: 0,
+    sessionTime: 0,            // total active tracking ms today (studyTime + unverifiedTime)
+    unverifiedTime: 0,         // total unverified ms today
+    pausedTime: 0,             // total paused ms today
     distractions: { lookAway: 0, away: 0, lidClosed: 0 },
     pauses: [],                // [{ type, start, end }]
     lastSaved: null,
+    schemaVersion: 2,
   },
 
   // ── Worker ──
   worker: null,
   lastTickTimestamp: 0,
+  lastTickMonotonic: null,
 
   // ── PiP ──
   pipWindow: null,
@@ -267,9 +499,9 @@ const state = {
 
 // ── Sensitivity thresholds (degrees from neutral angle) ──
 const SENSITIVITY = {
-  low:    35,
+  low: 35,
   medium: 25,
-  high:   15,
+  high: 15,
 };
 
 // ── Detection interval (ms) — ~5 fps ──
@@ -280,8 +512,10 @@ const DETECTION_INTERVAL_MS = 200;
 const CONFIG = {
   // User must face screen for this long before we resume the timer.
   resumeDelayMs: 2000,
-  // A heartbeat gap bigger than this means the laptop was asleep / lid closed.
+  // A heartbeat gap bigger than this (when camera isn't continuously running) means sleep / lid closed.
   lidGapMs: 8000,
+  // Long suspension threshold: gaps above this are treated as suspension regardless of camera wake timing.
+  suspensionGapMs: 60000,
   // Cap a single tick at this to avoid huge jumps after a stall.
   maxTickMs: 2000,
   // Detection is considered stalled if no frame arrived in this window.
@@ -323,13 +557,13 @@ function loadSettings() {
   if (DOM.liveFocusThresholdTag) {
     DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 50)}%`;
   }
-  DOM.settingSensitivity.value   = state.settings.sensitivity;
-  DOM.settingLookawayTime.value  = state.settings.lookawayTime;
-  DOM.settingAwayTime.value      = state.settings.awayTime;
+  DOM.settingSensitivity.value = state.settings.sensitivity;
+  DOM.settingLookawayTime.value = state.settings.lookawayTime;
+  DOM.settingAwayTime.value = state.settings.awayTime;
   DOM.settingReadingMode.checked = state.settings.readingMode;
-  DOM.settingDailyGoal.value     = state.settings.dailyGoal;
-  DOM.settingSound.checked       = state.settings.soundOn;
-  DOM.settingVolume.value        = state.settings.volume;
+  DOM.settingDailyGoal.value = state.settings.dailyGoal;
+  DOM.settingSound.checked = state.settings.soundOn;
+  DOM.settingVolume.value = state.settings.volume;
   DOM.settingNotifications.checked = state.settings.notificationsOn;
   DOM.settingCameraPreview.checked = state.settings.cameraPreview;
 }
@@ -691,13 +925,13 @@ function setStatus(status, text) {
   DOM.statusChip.setAttribute('data-status', status);
 
   const defaultTexts = {
-    'idle':          (state.session && (state.session.studyTime || state.session.accStudyMs || 0) > 0)
-                       ? 'Ready to continue' : 'Ready to study',
-    'calibrating':   'Calibrating…',
-    'studying':      'Studying',
-    'looking-away':  'Paused: looking away',
-    'away':          'Paused: away',
-    'lid-closed':    'Paused: lid closed or sleep',
+    'idle': (state.session && (state.session.studyTime || state.session.accStudyMs || 0) > 0)
+      ? 'Ready to continue' : 'Ready to study',
+    'calibrating': 'Calibrating…',
+    'studying': 'Studying',
+    'looking-away': 'Paused: looking away',
+    'away': 'Paused: away',
+    'lid-closed': 'Paused: lid closed or sleep',
   };
   const displayText = text || defaultTexts[status] || status;
   DOM.statusText.textContent = displayText;
@@ -904,36 +1138,39 @@ const ALERT_MESSAGES = {
 
 function playSoftChime() {
   if (!state.settings.soundOn || state.settings.volume == 0) return;
-  
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const AudioCtx = (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext));
+  if (!AudioCtx) return;
+  try {
+    if (!audioCtx) {
+      audioCtx = new AudioCtx();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
-  const volume = state.settings.volume / 100;
-  
-  const osc = audioCtx.createOscillator();
-  const gainNode = audioCtx.createGain();
+    const volume = state.settings.volume / 100;
 
-  // Soft bell-like chime
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-  osc.frequency.exponentialRampToValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
-  
-  gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-  gainNode.gain.linearRampToValueAtTime(volume * 0.4, audioCtx.currentTime + 0.05);
-  gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
 
-  osc.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+    // Soft bell-like chime
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+    osc.frequency.exponentialRampToValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
 
-  osc.start();
-  osc.stop(audioCtx.currentTime + 1.5);
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(volume * 0.4, audioCtx.currentTime + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
+
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + 1.5);
+  } catch (_) { }
 }
 
 function triggerNudge(type) {
   const now = Date.now();
-  
+
   if (type === 'lookAway' || type === 'away') {
     // Rate limit: max 1 alert per 60 seconds
     if (now - lastAlertTimestamp < 60000) {
@@ -942,20 +1179,20 @@ function triggerNudge(type) {
       showAlert('paused', icon, '<strong>Timer paused.</strong>');
       return;
     }
-    
+
     lastAlertTimestamp = now;
     playSoftChime();
-    
+
     const messages = ALERT_MESSAGES[type];
     const msg = messages[Math.floor(Math.random() * messages.length)];
     const icon = type === 'lookAway' ? '👀' : '🚶';
-    
+
     showAlert('paused', icon, `<strong>Timer paused.</strong> ${msg}`);
-    
-    if (state.settings.notificationsOn && Notification.permission === 'granted') {
+
+    if (state.settings.notificationsOn && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       new Notification("Ayush_Tracker", { body: msg, icon: './icons/icon-192.png' });
     }
-  } 
+  }
   else if (type === 'resumed') {
     // Quiet resume
     showAlert('resumed', '💪', '<strong>Back on track!</strong> Timer running.');
@@ -1044,12 +1281,40 @@ function stopCamera() {
  * This happens when the user closes the laptop lid, unplugs
  * an external webcam, or revokes camera permission.
  */
-function handleCameraTrackEnded() {
+function getMonotonicNow() {
+  return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+}
+
+function handleCameraTrackEnded(wallNow = Date.now(), monoNow = getMonotonicNow()) {
   updatePipeline('Cam', 'error', '❌ Camera Lost');
   if (state.session.active && state.status !== 'idle' && state.status !== 'lid-closed') {
-    const now = Date.now();
-    freezeStudyTime(now);
-    startPauseEvent('cameraLost', now);
+    freezeStudyTime(wallNow, monoNow);
+    if (state.session.unverifiedStartedAt !== null) {
+      if (state.lastTickMonotonic !== null) {
+        const cursor = typeof state.session.unverifiedCursorMono === 'number'
+          ? state.session.unverifiedCursorMono
+          : state.lastTickMonotonic;
+        const extraMono = (typeof monoNow === 'number' && typeof cursor === 'number' && monoNow >= cursor)
+          ? (monoNow - cursor)
+          : 0;
+        state.session.accUnverifiedMs = Math.max(
+          state.session.unverifiedTime || 0,
+          (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0)
+        ) + extraMono;
+      } else {
+        state.session.accUnverifiedMs = (state.session.accUnverifiedMs || 0) +
+          Math.max(0, wallNow - state.session.unverifiedStartedAt);
+      }
+      state.session.unverifiedTime = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs);
+      state.session.unverifiedRunMs = 0;
+      state.session.unverifiedCursorMono = null;
+      state.session.unverifiedStartedAt = null;
+    }
+    state.session.sessionTime = (state.session.studyTime || 0) + (state.session.unverifiedTime || 0);
+    startPauseEvent('cameraLost', wallNow, monoNow);
+    state.session.pausedTime = calculateTotalPausedTime(state.session.pauses, wallNow);
     setStatus('lid-closed');
     showAlert('paused', '💤', '<strong>Camera lost.</strong> Timer paused. Reopen and I\'ll welcome you back.');
     state.session.distractions.lidClosed++;
@@ -1145,15 +1410,15 @@ function calculateHeadPose(landmarks) {
     return { yaw: 0, pitch: 0 };
   }
 
-  const noseTip     = landmarks[4];
-  const rightCheek  = landmarks[234]; // person's right, camera left
-  const leftCheek   = landmarks[454]; // person's left, camera right
+  const noseTip = landmarks[4];
+  const rightCheek = landmarks[234]; // person's right, camera left
+  const leftCheek = landmarks[454]; // person's left, camera right
   const foreheadTop = landmarks[10];
-  const chinBottom  = landmarks[152];
-  const rightEye    = landmarks[33];
-  const leftEye     = landmarks[263];
-  const rightMouth  = landmarks[61];
-  const leftMouth   = landmarks[291];
+  const chinBottom = landmarks[152];
+  const rightEye = landmarks[33];
+  const leftEye = landmarks[263];
+  const rightMouth = landmarks[61];
+  const leftMouth = landmarks[291];
 
   // Face center between outer cheek edges
   const centerX = (rightCheek.x + leftCheek.x) / 2;
@@ -1333,8 +1598,8 @@ async function runCalibration() {
         state.calibration.neutralPitch = sum.pitch / samples.length;
 
         console.log(`🎯 Calibrated: yaw=${state.calibration.neutralYaw.toFixed(1)}°, ` +
-                     `pitch=${state.calibration.neutralPitch.toFixed(1)}°, ` +
-                     `(${samples.length} samples)`);
+          `pitch=${state.calibration.neutralPitch.toFixed(1)}°, ` +
+          `(${samples.length} samples)`);
 
         DOM.calibrationOverlay.classList.remove('active');
         state.calibration.isCalibrating = false;
@@ -1359,18 +1624,28 @@ async function runCalibration() {
  */
 function startDetectionLoop() {
   state.camera.isDetecting = true;
-  // Initialise to 0 so the very first frame is processed immediately
+  // Reset health & attempt timestamps; never mark frames as processed until detectForVideo succeeds
+  state.camera._lastLoopTime = 0;
+  state.camera.lastAttemptTime = 0;
+  state.camera.lastFrameTime = 0;
+  state.camera.lastFaceTime = 0;
+  state.camera.lastAttemptMonotonic = null;
+  state.camera.lastFrameMonotonic = null;
+  state.camera.lastFaceMonotonic = null;
   state.camera.lastDetectionTime = 0;
+  state.camera.frameSeq = 0;
+  state.camera._lastTickFrameSeq = 0;
+  state.camera._msSinceLastFrame = 0;
   state.headPose.buffer = [];
   updatePipeline('Face', 'loading', '⏳ Face Searching…');
 
   function loop() {
     if (!state.camera.isDetecting) return;
 
-    // Throttle to ~5 fps using wall-clock time so it matches the stall check
-    const now = Date.now();
-    if (now - state.camera.lastDetectionTime >= DETECTION_INTERVAL_MS) {
-      state.camera.lastDetectionTime = now; // wall-clock ms — same unit as Date.now()
+    // Throttle to ~5 fps using internal monotonic/wall loop timer (NOT camera health timestamps)
+    const loopNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (loopNow - (state.camera._lastLoopTime || 0) >= DETECTION_INTERVAL_MS) {
+      state.camera._lastLoopTime = loopNow;
       runDetection();
     }
 
@@ -1402,26 +1677,58 @@ function stopDetectionLoop() {
 let frameCount = 0;
 let lastFpsTime = Date.now();
 
-function runDetection() {
+function runDetection(wallNowOverride, monotonicOverride) {
   const faceLandmarker = state.camera.faceLandmarker;
   const video = DOM.cameraPreview;
+  const wallNow = typeof wallNowOverride === 'number' ? wallNowOverride : Date.now();
+  const monoNow = typeof monotonicOverride === 'number'
+    ? monotonicOverride
+    : (typeof performance !== 'undefined' ? performance.now() : wallNow);
 
-  // Make sure video is ready
-  if (!faceLandmarker || !video || video.readyState < 2) return;
+  // Record detection attempt time (distinct from successful frame & valid face times)
+  state.camera.lastAttemptTime = wallNow;
+  state.camera.lastAttemptMonotonic = monoNow;
 
-  // Run face detection on the current video frame
-  const now = performance.now();
-  let results;
-  try {
-    results = faceLandmarker.detectForVideo(video, now);
-  } catch (err) {
-    // Detection can fail if the video frame is not ready
+  // Video-not-ready conditions must NOT update lastFrameTime, lastFaceTime, or appear healthy
+  if (!faceLandmarker || !video || video.readyState < 2) {
+    updatePipeline('Face', 'warn', '⚠️ Video Not Ready');
     return;
   }
-  
+
+  // Run face detection on the current video frame
+  let results;
+  try {
+    results = faceLandmarker.detectForVideo(video, monoNow);
+  } catch (err) {
+    // Detection failed: do NOT update lastFrameTime or lastFaceTime
+    return;
+  }
+
+  if (!results || typeof results !== 'object') {
+    return;
+  }
+
+  // Frame processing succeeded
+  const prevFrameMono = state.camera.lastFrameMonotonic;
+  const prevFrameWall = state.camera.lastFrameTime || state.camera.lastDetectionTime || 0;
+  if (state.camera.isDetecting && state.session.active) {
+    if (typeof prevFrameMono === 'number' && Number.isFinite(prevFrameMono)) {
+      if ((monoNow - prevFrameMono) > CONFIG.lidGapMs) {
+        state.camera._suspensionDetected = true;
+      }
+    } else if (prevFrameWall > 0 && (wallNow - prevFrameWall) > CONFIG.lidGapMs) {
+      state.camera._suspensionDetected = true;
+    }
+  }
+  state.camera.lastFrameTime = wallNow;
+  state.camera.lastFrameMonotonic = monoNow;
+  state.camera.lastDetectionTime = wallNow;
+  state.camera.frameSeq = (state.camera.frameSeq || 0) + 1;
+  state.camera._msSinceLastFrame = 0;
+
   // Calculate FPS
   frameCount++;
-  const timeNow = Date.now();
+  const timeNow = wallNow;
   if (timeNow - lastFpsTime >= 1000) {
     DOM.liveFps.textContent = frameCount;
     frameCount = 0;
@@ -1430,11 +1737,13 @@ function runDetection() {
 
   const faceFound = Boolean(results.faceLandmarks && results.faceLandmarks.length > 0);
   if (faceFound) {
+    state.camera.lastFaceTime = wallNow;
+    state.camera.lastFaceMonotonic = monoNow;
     updatePipeline('Face', 'active', '✅ Face Detected');
   } else {
     updatePipeline('Face', 'warn', '👀 No Face');
   }
-  
+
   // Draw canvas overlay if checked & main tab is active (saves CPU/GPU headroom in background)
   if (DOM.livePreviewCb.checked && !document.hidden) {
     const canvas = DOM.liveCanvas;
@@ -1442,7 +1751,7 @@ function runDetection() {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     if (faceFound && results.facialTransformationMatrixes && results.facialTransformationMatrixes.length > 0) {
       // Just draw a simple box using min/max of landmarks for the first face
       const landmarks = results.faceLandmarks[0];
@@ -1473,7 +1782,7 @@ function runDetection() {
     state.headPose.pitch = smoothed.pitch;
     state.headPose.faceDetected = true;
     state.headPose.lastFaceSeen = Date.now();
-    
+
     DOM.liveYaw.textContent = Math.round(smoothed.yaw);
     DOM.livePitch.textContent = Math.round(smoothed.pitch);
     DOM.liveSinceFace.textContent = 0;
@@ -1507,7 +1816,7 @@ function runDetection() {
     updatePiP(focusScore);
 
     // Update the state machine (stops suddenly if focusScore < cutoff)
-    processDetectionResult(true, isFacingScreen, focusScore);
+    processDetectionResult(true, isFacingScreen, focusScore, wallNow, monoNow);
 
   } else {
     state.headPose.faceDetected = false;
@@ -1523,7 +1832,7 @@ function runDetection() {
 
     if (state.calibration.isCalibrating) return;
 
-    processDetectionResult(false, false, 0);
+    processDetectionResult(false, false, 0, wallNow, monoNow);
   }
 }
 
@@ -1538,16 +1847,17 @@ function runDetection() {
  * @param {{ yaw: number, pitch: number }|null} pose
  * @returns {number} — percentage integer between 0 and 100
  */
-function calculateFocusScore(pose) {
+function calculateFocusScore(pose, neutralOverride, thresholdOverride, readingModeOverride) {
   if (!pose) return 0;
 
-  const threshold = SENSITIVITY[state.settings.sensitivity] || 25;
-  const neutralYaw = state.calibration.neutralYaw || 0;
-  const neutralPitch = state.calibration.neutralPitch || 0;
+  const threshold = thresholdOverride ?? (SENSITIVITY[state?.settings?.sensitivity] || 25);
+  const neutralYaw = neutralOverride?.yaw ?? (state?.calibration?.neutralYaw || 0);
+  const neutralPitch = neutralOverride?.pitch ?? (state?.calibration?.neutralPitch || 0);
+  const readingMode = readingModeOverride ?? (state?.settings?.readingMode || false);
 
   const yawDev = Math.abs(pose.yaw - neutralYaw);
   let pitchDev = Math.abs(pose.pitch - neutralPitch);
-  if (state.settings.readingMode && pose.pitch > neutralPitch) {
+  if (readingMode && pose.pitch > neutralPitch) {
     pitchDev = 0; // Ignore looking down in reading mode
   }
 
@@ -1558,6 +1868,32 @@ function calculateFocusScore(pose) {
   // Power curve: stays >= 80% in comfortable screen cone, drops sharply once turned away
   const score = Math.max(0, Math.min(100, Math.round(100 * (1 - Math.pow(x, 1.5)))));
   return score;
+}
+
+function calculateYaw(noseX, leftCheekX, rightCheekX) {
+  const dLeft = Math.abs(noseX - leftCheekX);
+  const dRight = Math.abs(noseX - rightCheekX);
+  if (dLeft + dRight === 0) return 0;
+  const yawRatio = (dLeft - dRight) / (dLeft + dRight);
+  return yawRatio * 90;
+}
+
+function calculatePitch(noseY, foreheadY, chinY) {
+  const dTop = Math.abs(noseY - foreheadY);
+  const dBottom = Math.abs(noseY - chinY);
+  if (dTop + dBottom === 0) return 0;
+  const pitchRatio = (dTop - dBottom) / (dTop + dBottom);
+  return pitchRatio * 90;
+}
+
+function calculateGoalProgress(studyMs, goalHours) {
+  const goalMs = (goalHours || 4) * 3600000;
+  if (goalMs <= 0) return 0;
+  return Math.min(100, Math.round((Math.max(0, studyMs) / goalMs) * 100));
+}
+
+function calculateBackdatedStudyTime(recordedStudyTime, pauseDelayMs) {
+  return Math.max(0, recordedStudyTime - pauseDelayMs);
 }
 
 /**
@@ -1617,10 +1953,10 @@ function updateFocusIndicator(pose, focusScore) {
   DOM.focusPctVal.style.color = arcColour;
 
   // Head-position crosshair dot (50% = center of the grid)
-  const xPct = 50 + ((pose.yaw   - neutralYaw)   / threshold) * 45;
+  const xPct = 50 + ((pose.yaw - neutralYaw) / threshold) * 45;
   const yPct = 50 + ((pose.pitch - neutralPitch) / threshold) * 45;
   DOM.headPosDot.style.left = Math.min(95, Math.max(5, xPct)) + '%';
-  DOM.headPosDot.style.top  = Math.min(95, Math.max(5, yPct)) + '%';
+  DOM.headPosDot.style.top = Math.min(95, Math.max(5, yPct)) + '%';
   DOM.headPosDot.style.background = arcColour;
   DOM.headPosDot.style.opacity = '1';
 }
@@ -1645,8 +1981,17 @@ function updateFocusIndicator(pose, focusScore) {
  * @param {boolean} facingScreen — is focus >= threshold?
  * @param {number} [focusScore] — live focus percentage (0-100)
  */
-function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
-  const now = Date.now();
+function processDetectionResult(faceDetected, facingScreen, focusScore = 0, timestamp = Date.now(), monotonicNow = null) {
+  if (typeof faceDetected === 'object' && faceDetected !== null) {
+    const opts = faceDetected;
+    faceDetected = !!opts.faceDetected;
+    facingScreen = opts.isFacingScreen ?? opts.facingScreen ?? true;
+    focusScore = opts.focusScore ?? (opts.isFacingScreen !== false ? 100 : 0);
+    timestamp = opts.timestamp || Date.now();
+    monotonicNow = typeof opts.monotonic === 'number' ? opts.monotonic : null;
+  }
+  const now = timestamp;
+  const monoNow = typeof monotonicNow === 'number' && Number.isFinite(monotonicNow) ? monotonicNow : null;
   const hp = state.headPose;
   const cutoff = state.settings.focusThreshold || 50;
   const isFocused = faceDetected && (focusScore >= cutoff);
@@ -1659,8 +2004,11 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
     if (isFocused) {
       // All good — keep studying
       hp.lookAwayStart = 0;
+      hp.lookAwayStartMono = null;
       hp.awayStart = 0;
+      hp.awayStartMono = null;
       hp.facingScreenSince = hp.facingScreenSince || now;
+      if (monoNow !== null && hp.facingScreenSinceMono === null) hp.facingScreenSinceMono = monoNow;
       return;
     }
 
@@ -1668,14 +2016,18 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
       // Face visible but focus dropped below cutoff — wait lookawayTime before pausing
       if (hp.lookAwayStart === 0) {
         hp.lookAwayStart = now;
+        hp.lookAwayStartMono = monoNow;
       }
       hp.facingScreenSince = 0;
+      hp.facingScreenSinceMono = null;
 
-      const lookawayElapsed = now - hp.lookAwayStart;
+      const lookawayElapsed = (monoNow !== null && hp.lookAwayStartMono !== null)
+        ? (monoNow - hp.lookAwayStartMono)
+        : (now - hp.lookAwayStart);
       if (lookawayElapsed >= lookawayLimit) {
-        // Freeze back-dated to when the user actually looked away
-        freezeStudyTime(hp.lookAwayStart);
-        startPauseEvent('lookAway', hp.lookAwayStart);
+        // Freeze back-dated to when the user actually looked away (monotonic + wall)
+        freezeStudyTime(hp.lookAwayStart, hp.lookAwayStartMono);
+        startPauseEvent('lookAway', hp.lookAwayStart, hp.lookAwayStartMono);
         setStatus('looking-away');
         state.session.distractions.lookAway++;
         triggerNudge('lookAway');
@@ -1689,15 +2041,20 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
       // Face completely lost — wait awayTime (time pause when face gone) before pausing
       if (hp.awayStart === 0) {
         hp.awayStart = now;
+        hp.awayStartMono = monoNow;
       }
       hp.facingScreenSince = 0;
+      hp.facingScreenSinceMono = null;
       hp.lookAwayStart = 0;
+      hp.lookAwayStartMono = null;
 
-      const awayElapsed = now - hp.awayStart;
+      const awayElapsed = (monoNow !== null && hp.awayStartMono !== null)
+        ? (monoNow - hp.awayStartMono)
+        : (now - hp.awayStart);
       if (awayElapsed >= awayLimit) {
-        // Freeze back-dated to when the face was lost
-        freezeStudyTime(hp.awayStart);
-        startPauseEvent('away', hp.awayStart);
+        // Freeze back-dated to when the face was lost (monotonic + wall)
+        freezeStudyTime(hp.awayStart, hp.awayStartMono);
+        startPauseEvent('away', hp.awayStart, hp.awayStartMono);
         setStatus('away');
         state.session.distractions.away++;
         triggerNudge('away');
@@ -1712,23 +2069,34 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
   if (['looking-away', 'away', 'lid-closed'].includes(state.status)) {
 
     if (isFocused) {
-      // User is back and focused on screen — require 1s of steady focus to resume
+      // User is back and focused on screen — require configured steady focus to resume
       if (hp.facingScreenSince === 0) {
         hp.facingScreenSince = now;
+        hp.facingScreenSinceMono = monoNow;
       }
 
-      const facingDuration = now - hp.facingScreenSince;
-      if (facingDuration >= 1000) {
+      const facingDuration = (monoNow !== null && hp.facingScreenSinceMono !== null)
+        ? (monoNow - hp.facingScreenSinceMono)
+        : (now - hp.facingScreenSince);
+      if (facingDuration >= (CONFIG.resumeDelayMs || 2000)) {
         hp.lookAwayStart = 0;
+        hp.lookAwayStartMono = null;
         hp.awayStart = 0;
-        endPauseEvent(now);
-        resumeStudyTime(now);
+        hp.awayStartMono = null;
+        hp.facingScreenSince = 0;
+        hp.facingScreenSinceMono = null;
+        endPauseEvent(now, monoNow);
+        resumeStudyTime(now, monoNow);
+        if (state.session.sessionStartedAt === null) {
+          state.session.sessionStartedAt = now;
+        }
         setStatus('studying');
         triggerNudge('resumed');
         autoSaveSession();
       }
     } else {
       hp.facingScreenSince = 0;
+      hp.facingScreenSinceMono = null;
     }
     return;
   }
@@ -1737,6 +2105,61 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
 // ═══════════════════════════════════════════════
 // 19B. TIMER ANCHORING — freeze and resume
 // ═══════════════════════════════════════════════
+
+/**
+ * Calculate total paused time from the pauses array.
+ * Merges overlapping/duplicate pause intervals so durations are never
+ * negative or double-counted. If a pause is unclosed, spans up to relativeTo.
+ */
+function calculateTotalPausedTime(pauses = [], relativeTo = Date.now()) {
+  if (!Array.isArray(pauses) || pauses.length === 0) return 0;
+  const monoMap = new Map();
+  const wallIntervals = [];
+
+  for (const p of pauses) {
+    if (!p || typeof p.start !== 'number' || !Number.isFinite(p.start)) continue;
+    const key = `${p.type || 'pause'}_${p.start}`;
+    if (typeof p.end === 'number' && typeof p.durationMs === 'number' && Number.isFinite(p.durationMs)) {
+      const prev = monoMap.get(key) || 0;
+      monoMap.set(key, Math.max(prev, Math.max(0, p.durationMs)));
+      continue;
+    }
+    if (p.end === null && typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)) {
+      const prev = monoMap.get(key) || 0;
+      monoMap.set(key, Math.max(prev, Math.max(0, p.monoDurationMs)));
+      continue;
+    }
+    const rawEnd = (typeof p.end === 'number' && Number.isFinite(p.end)) ? p.end : relativeTo;
+    const end = Math.max(p.start, rawEnd);
+    if (end > p.start) {
+      wallIntervals.push([p.start, end]);
+    }
+  }
+
+  let monoTotal = 0;
+  for (const dur of monoMap.values()) {
+    monoTotal += dur;
+  }
+
+  let wallTotal = 0;
+  if (wallIntervals.length > 0) {
+    wallIntervals.sort((a, b) => a[0] - b[0]);
+    let curStart = wallIntervals[0][0];
+    let curEnd = wallIntervals[0][1];
+    for (let i = 1; i < wallIntervals.length; i++) {
+      const [s, e] = wallIntervals[i];
+      if (s <= curEnd) {
+        curEnd = Math.max(curEnd, e);
+      } else {
+        wallTotal += (curEnd - curStart);
+        curStart = s;
+        curEnd = e;
+      }
+    }
+    wallTotal += (curEnd - curStart);
+  }
+  return Math.max(0, monoTotal + wallTotal);
+}
 
 /**
  * Freeze the study timer at an exact past timestamp.
@@ -1748,33 +2171,103 @@ function processDetectionResult(faceDetected, facingScreen, focusScore = 0) {
  *
  * @param {number} pauseAt — wall-clock ms when the pause actually began
  */
-function freezeStudyTime(pauseAt) {
+function freezeStudyTime(pauseAt = Date.now(), pauseMonotonic = null) {
   const s = state.session;
   if (s.studyStartedAt === null) return; // already frozen
-  s.accStudyMs += Math.max(0, pauseAt - s.studyStartedAt);
-  s.studyTime = s.accStudyMs;
+  const hasExplicitMono = typeof pauseMonotonic === 'number' && Number.isFinite(pauseMonotonic);
+  const cursor = typeof s.studyCursorMono === 'number' ? s.studyCursorMono : state.lastTickMonotonic;
+
+  if (hasExplicitMono && typeof cursor === 'number' && Number.isFinite(cursor)) {
+    if (pauseMonotonic >= cursor) {
+      const extraMono = pauseMonotonic - cursor;
+      s.accStudyMs = Math.max(s.studyTime || 0, (s.accStudyMs || 0) + (s.studyRunMs || 0)) + extraMono;
+    } else {
+      // Back-dated pause started before cursor
+      const backdate = cursor - pauseMonotonic;
+      const runCredit = Math.max(0, (s.studyRunMs || 0) - backdate);
+      s.accStudyMs = (s.accStudyMs || 0) + runCredit;
+    }
+  } else if (state.lastTickMonotonic !== null) {
+    const refTime = state.lastTickTimestamp || pauseAt;
+    const backdate = (pauseAt < refTime && (refTime - pauseAt) <= 60000) ? (refTime - pauseAt) : 0;
+    const subTick = (pauseAt > refTime && (pauseAt - refTime) <= CONFIG.maxTickMs) ? (pauseAt - refTime) : 0;
+    const runCredit = Math.max(0, (s.studyRunMs || 0) - backdate + subTick);
+    s.accStudyMs = (s.accStudyMs || 0) + runCredit;
+  } else {
+    s.accStudyMs = (s.accStudyMs || 0) + Math.max(0, pauseAt - s.studyStartedAt);
+  }
+  s.studyTime = Math.max(0, s.accStudyMs);
+  s.studyRunMs = 0;
   s.studyStartedAt = null;
-  saveTodayToLocalStorage();
+  s.studyCursorMono = null;
+  saveTodayToLocalStorage(pauseAt);
 }
 
-function resumeStudyTime(resumeAt) {
+function resumeStudyTime(resumeAt = Date.now(), resumeMonotonic = null) {
+  state.session.studyRunMs = 0;
   state.session.studyStartedAt = resumeAt;
+  state.session.studyCursorMono = (typeof resumeMonotonic === 'number' && Number.isFinite(resumeMonotonic))
+    ? resumeMonotonic
+    : state.lastTickMonotonic;
 }
 
 /**
  * Open a new pause event in the session's pauses list.
- * The event is closed by endPauseEvent when study resumes.
+ * Captures monotonic boundaries so mid-tick pauses never double-count intervals.
  */
-function startPauseEvent(type, timestamp) {
-  state.session.pauses.push({ type, start: timestamp, end: null });
+function startPauseEvent(type, timestamp = Date.now(), monotonicNow = null) {
+  if (!Array.isArray(state.session.pauses)) {
+    state.session.pauses = [];
+  }
+  const hasExplicitMono = typeof monotonicNow === 'number' && Number.isFinite(monotonicNow);
+  endPauseEvent(timestamp, hasExplicitMono ? monotonicNow : null);
+
+  const pauseObj = { type, start: timestamp, end: null };
+  if (hasExplicitMono) {
+    pauseObj.monoStart = monotonicNow;
+    pauseObj.monoCursor = monotonicNow;
+    pauseObj.monoDurationMs = 0;
+  } else if (state.lastTickMonotonic !== null) {
+    const refTime = state.lastTickTimestamp || timestamp;
+    const backdateMs = (timestamp < refTime && (refTime - timestamp) <= 60000)
+      ? (refTime - timestamp)
+      : 0;
+    pauseObj.monoStart = state.lastTickMonotonic - backdateMs;
+    pauseObj.monoCursor = state.lastTickMonotonic;
+    pauseObj.monoDurationMs = Math.max(0, backdateMs);
+  }
+  state.session.pauses.push(pauseObj);
 }
 
 /**
- * Close the most-recent open pause event.
+ * Close any unclosed pause events (clamped to non-negative duration).
+ * Preserves exact monotonic elapsed duration when closed mid-tick or across clock jumps.
  */
-function endPauseEvent(timestamp) {
-  const open = state.session.pauses.slice().reverse().find(p => p.end === null);
-  if (open) open.end = timestamp;
+function endPauseEvent(timestamp = Date.now(), monotonicNow = null) {
+  if (!Array.isArray(state.session.pauses)) return;
+  const hasExplicitMono = typeof monotonicNow === 'number' && Number.isFinite(monotonicNow);
+  for (const p of state.session.pauses) {
+    if (p && p.end === null) {
+      p.end = Math.max(p.start, timestamp);
+      if (hasExplicitMono) {
+        const cursor = typeof p.monoCursor === 'number'
+          ? p.monoCursor
+          : (typeof p.monoStart === 'number' ? p.monoStart : null);
+        const extraMono = (cursor !== null && Number.isFinite(cursor))
+          ? Math.max(0, monotonicNow - cursor)
+          : 0;
+        p.monoDurationMs = Math.max(0, (p.monoDurationMs || 0) + extraMono);
+        p.monoCursor = monotonicNow;
+        p.durationMs = p.monoDurationMs;
+      } else if (typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)) {
+        const refTime = state.lastTickTimestamp || timestamp;
+        const subTick = (state.lastTickMonotonic !== null && timestamp > refTime && (timestamp - refTime) <= CONFIG.maxTickMs)
+          ? (timestamp - refTime)
+          : 0;
+        p.durationMs = Math.max(0, p.monoDurationMs + subTick);
+      }
+    }
+  }
 }
 
 
@@ -1787,19 +2280,19 @@ function endPauseEvent(timestamp) {
  */
 function updateSessionStatsDisplay() {
   const s = state.session;
-  const totalDistractions = s.distractions.lookAway + s.distractions.away + s.distractions.lidClosed;
+  const totalDistractions = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
   if (DOM.statDistractions) DOM.statDistractions.textContent = totalDistractions;
   if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDistractions;
 
-  // Focus % = study time / session time (displays '—' when no session data exists)
-  const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
+  // Focus % = study time / total tracking span (active session + paused time)
+  const totalTrackingSpan = (s.sessionTime || 0) + (s.pausedTime || 0);
+  const focusDisplay = formatFocusPercentage(s.studyTime, totalTrackingSpan);
   if (DOM.statFocus) DOM.statFocus.textContent = focusDisplay;
   if (DOM.homeFocus) DOM.homeFocus.textContent = focusDisplay;
 
-  // Hero subtimes: Session time and Paused time
-  const pausedMs = Math.max(0, s.sessionTime - s.studyTime - (s.unverifiedTime || 0));
-  if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(s.sessionTime);
-  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
+  // Hero subtimes: Active today (sessionTime) and Paused time (pausedTime)
+  if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(s.sessionTime || 0);
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(s.pausedTime || 0);
 }
 
 
@@ -1819,10 +2312,18 @@ function startWorker() {
 
   state.worker = new Worker('./worker.js');
   state.lastTickTimestamp = Date.now();
+  state.lastTickMonotonic = null;
 
   state.worker.onmessage = (e) => {
     if (e.data.type === 'tick') {
-      handleTick(e.data);
+      // Unify worker tick monotonic timestamp onto main thread performance.now() origin
+      // so pauses triggered by main-thread events share one monotonic timeline.
+      const mainMono = getMonotonicNow();
+      handleTick({
+        ...e.data,
+        workerMonotonic: e.data.monotonic,
+        monotonic: mainMono,
+      });
     }
   };
 
@@ -1844,58 +2345,242 @@ function stopWorker() {
     state.worker.terminate();
     state.worker = null;
   }
+  state.lastTickMonotonic = null;
   updatePipeline('Worker', 'inactive');
   console.log('⏱ Worker stopped');
 }
 
 /**
+ * Compute camera detection health metrics without relying solely on mutable wall clock.
+ * Separates detection attempts from successful frame processing and valid face detection.
+ */
+function evaluateCameraHealth(now, hasMonotonic, monotonicDelta) {
+  const cam = state.camera;
+  const latestFrameWall = Math.max(cam.lastFrameTime || 0, cam.lastDetectionTime || 0);
+  const hasHealthyFrame = latestFrameWall > 0;
+
+  if (!cam.isDetecting) {
+    return { isCameraActive: false, isStalled: false, latestFrameWall };
+  }
+
+  if (!hasHealthyFrame) {
+    // Detection started (attempts may be occurring) but no frame has ever succeeded
+    return { isCameraActive: false, isStalled: true, latestFrameWall: 0 };
+  }
+
+  const prevTickWall = state.lastTickTimestamp || 0;
+  const frameArrived =
+    ((cam.frameSeq || 0) !== (cam._lastTickFrameSeq || 0)) ||
+    (prevTickWall > 0 && latestFrameWall > prevTickWall) ||
+    (latestFrameWall === now);
+
+  if (frameArrived) {
+    cam._lastTickFrameSeq = cam.frameSeq || 0;
+    const wallSinceFrame = now - latestFrameWall;
+    if (wallSinceFrame >= 0 && wallSinceFrame <= CONFIG.stallThresholdMs) {
+      cam._msSinceLastFrame = wallSinceFrame;
+    } else {
+      cam._msSinceLastFrame = 0;
+    }
+  } else if (hasMonotonic) {
+    cam._msSinceLastFrame = (cam._msSinceLastFrame || 0) + Math.max(0, monotonicDelta);
+  } else {
+    cam._msSinceLastFrame = Math.max(0, now - latestFrameWall);
+  }
+
+  const msSinceFrame = cam._msSinceLastFrame || 0;
+  const isStalled = msSinceFrame > CONFIG.stallThresholdMs;
+  const isCameraActive = !isStalled;
+  return { isCameraActive, isStalled, latestFrameWall };
+}
+
+/**
  * Handle a tick from the worker.
  * This runs every ~1 second. We use it to:
- * - Update the timer display
- * - Detect heartbeat gaps (lid close / sleep)
- * - Update session time counters
+ * - Progress active/stalled timers monotonically using performance.now()
+ * - Use wall-clock timestamps only for calendar boundaries and record metadata
+ * - Detect heartbeat gaps (lid close / sleep / runtime restart)
+ * - Update session time counters safely across clock jumps
  *
- * @param {{ timestamp: number, gap: number }} data
+ * @param {{ timestamp: number, gap?: number, monotonic?: number }} data
  */
 function handleTick(data) {
   const now = data.timestamp;
-  const gap = data.gap;
-  
-  if (gap > CONFIG.lidGapMs) {
+  const hasMonotonic = typeof data.monotonic === 'number' && Number.isFinite(data.monotonic);
+  const monotonicNow = hasMonotonic ? data.monotonic : null;
+  const lastTick = state.lastTickTimestamp || (now - (typeof data.gap === 'number' ? data.gap : 0));
+
+  let monotonicDelta = 0;
+  let isRuntimeRestart = false;
+
+  if (hasMonotonic) {
+    if (state.lastTickMonotonic === null || state.lastTickMonotonic === undefined) {
+      monotonicDelta = (typeof data.gap === 'number' && data.gap > 0 && data.gap <= CONFIG.maxTickMs)
+        ? data.gap
+        : 0;
+    } else if (monotonicNow < state.lastTickMonotonic) {
+      // Monotonic clock went backward: worker or runtime restarted
+      isRuntimeRestart = true;
+      monotonicDelta = 0;
+    } else {
+      monotonicDelta = monotonicNow - state.lastTickMonotonic;
+    }
+  } else {
+    const legacyGap = typeof data.gap === 'number' ? data.gap : (now - (state.lastTickTimestamp || now));
+    if (legacyGap < 0) {
+      // Legacy non-monotonic backward wall-clock jump: preserve counters without decrementing
+      state.lastTickTimestamp = now;
+      if (state.session.studyStartedAt !== null && state.session.studyStartedAt > now) {
+        state.session.accStudyMs = Math.max(state.session.studyTime || 0, state.session.accStudyMs || 0);
+        state.session.studyStartedAt = now;
+      }
+      return;
+    }
+    monotonicDelta = legacyGap;
+  }
+
+  // Handle runtime/worker restart safely without counting uncertain downtime
+  if (isRuntimeRestart) {
+    state.session.accStudyMs = Math.max(state.session.studyTime || 0, state.session.accStudyMs || 0);
+    state.session.studyRunMs = 0;
+    if (state.session.studyStartedAt !== null) {
+      state.session.studyStartedAt = now;
+      state.session.studyCursorMono = monotonicNow;
+    } else {
+      state.session.studyCursorMono = null;
+    }
+    state.session.accUnverifiedMs = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs || 0);
+    state.session.unverifiedRunMs = 0;
+    if (state.session.unverifiedStartedAt !== null) {
+      state.session.unverifiedStartedAt = now;
+      state.session.unverifiedCursorMono = monotonicNow;
+    } else {
+      state.session.unverifiedCursorMono = null;
+    }
+    if (Array.isArray(state.session.pauses)) {
+      for (const p of state.session.pauses) {
+        if (p && p.end === null) {
+          p.monoCursor = monotonicNow;
+          if (typeof p.monoDurationMs !== 'number') p.monoDurationMs = 0;
+        }
+      }
+    }
+
+    const restartDayStr = getLocalDateString(now);
+    if (state.session.active && state.session.dateStr && state.session.dateStr !== restartDayStr) {
+      handleMidnightRollover(now, restartDayStr, state.lastTickTimestamp || now);
+      state.lastTickTimestamp = now;
+      state.lastTickMonotonic = monotonicNow;
+      return;
+    }
+
+    if (state.session.active) {
+      state.session.sessionTime = (state.session.studyTime || 0) + (state.session.unverifiedTime || 0);
+      state.session.pausedTime = Math.max(
+        state.session.pausedTime || 0,
+        calculateTotalPausedTime(state.session.pauses, now)
+      );
+      DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+      updateSessionStatsDisplay();
+      updatePiP();
+      saveTodayToLocalStorage(now);
+    }
+
+    state.lastTickTimestamp = now;
+    state.lastTickMonotonic = monotonicNow;
+    return;
+  }
+
+  const effectiveGap = hasMonotonic
+    ? monotonicDelta
+    : (typeof data.gap === 'number' ? data.gap : (now - (state.lastTickTimestamp || now)));
+
+  const { isCameraActive, isStalled, latestFrameWall } = evaluateCameraHealth(
+    now,
+    hasMonotonic,
+    monotonicDelta
+  );
+  const cameraSawSuspension = Boolean(state.camera._suspensionDetected);
+  state.camera._suspensionDetected = false;
+  const pageLifecycleSuspended = Boolean(state._lifecycleSuspended);
+  state._lifecycleSuspended = false;
+
+  // Distinguish browser worker delays (continuous camera verification healthy)
+  // from true suspension / sleep (camera frames interrupted or page lifecycle suspended).
+  const isSleepGap =
+    pageLifecycleSuspended ||
+    (effectiveGap > CONFIG.lidGapMs && (!isCameraActive || cameraSawSuspension));
+
+  if (isSleepGap) {
     updatePipeline('Worker', 'warn', '⚠️ Worker Gap');
   } else {
     updatePipeline('Worker', 'active', '✅ Worker Active');
   }
 
-  // ── Detect midnight rollover ──
-  // If calendar day changed while tracking, rollover to fresh day
+  // ── Detect midnight rollover (uses wall-clock calendar date) ──
   const currentDayStr = getLocalDateString(now);
   if (state.session.active && state.session.dateStr && state.session.dateStr !== currentDayStr) {
-    handleMidnightRollover(now, currentDayStr);
+    handleMidnightRollover(now, currentDayStr, isSleepGap ? lastTick : null, { isStalled, latestFrameWall });
+    state.lastTickTimestamp = now;
+    if (hasMonotonic) state.lastTickMonotonic = monotonicNow;
     return;
   }
 
-  // ── Detect lid close via heartbeat gap ──
-  // A gap much bigger than 1 s means the laptop was asleep or the lid was closed.
-  if (gap > CONFIG.lidGapMs && state.session.active && state.status !== 'idle') {
+  // ── Detect lid close via heartbeat gap (sleep / hibernation) ──
+  if (isSleepGap && state.session.active && state.status !== 'idle') {
+    // 1. Freeze study time before sleep gap without crediting sleep duration
+    if (state.status === 'studying') {
+      if (hasMonotonic) {
+        state.session.accStudyMs = Math.max(
+          state.session.studyTime || 0,
+          (state.session.accStudyMs || 0) + (state.session.studyRunMs || 0)
+        );
+        state.session.studyTime = state.session.accStudyMs;
+        state.session.studyRunMs = 0;
+        state.session.studyStartedAt = null;
+        state.session.studyCursorMono = null;
+        saveTodayToLocalStorage(lastTick);
+      } else {
+        freezeStudyTime(lastTick);
+      }
+    }
+    state.session.sessionStartedAt = null;
+    // 2. Close any ongoing unverified interval before sleep without crediting sleep duration
+    if (state.session.unverifiedStartedAt !== null) {
+      if (hasMonotonic) {
+        state.session.accUnverifiedMs = Math.max(
+          state.session.unverifiedTime || 0,
+          (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0)
+        );
+      } else {
+        state.session.accUnverifiedMs = (state.session.accUnverifiedMs || 0) +
+          Math.max(0, lastTick - state.session.unverifiedStartedAt);
+      }
+      state.session.unverifiedTime = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs);
+      state.session.unverifiedRunMs = 0;
+      state.session.unverifiedCursorMono = null;
+      state.session.unverifiedStartedAt = null;
+    }
 
     if (state.status !== 'lid-closed') {
-      freezeStudyTime(state.lastTickTimestamp);
-      startPauseEvent('lidClosed', state.lastTickTimestamp);
+      // Close any pre-sleep pause at lastTick/lastTickMonotonic so sleep gap is never counted as pausedTime
+      endPauseEvent(lastTick, state.lastTickMonotonic);
+      startPauseEvent('lidClosed', now, monotonicNow);
       setStatus('lid-closed');
       state.headPose.faceDetected = false;
       state.headPose.facingScreenSince = 0;
+      state.headPose.facingScreenSinceMono = null;
       state.session.distractions.lidClosed++;
 
-      const awayMinutes = Math.round(gap / 60000);
+      const awayMinutes = Math.round(effectiveGap / 60000);
       const awayText = awayMinutes >= 1
         ? `${awayMinutes} minute${awayMinutes > 1 ? 's' : ''}`
-        : `${Math.round(gap / 1000)} seconds`;
+        : `${Math.round(effectiveGap / 1000)} seconds`;
 
       const msg = `You were away for about ${awayText}. Timer was paused.`;
       showAlert('welcome-back', '👋', `<strong>Welcome back!</strong> ${msg}`);
       playSoftChime();
-      if (state.settings.notificationsOn && Notification.permission === 'granted') {
+      if (state.settings.notificationsOn && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         new Notification('Ayush_Tracker', { body: `Welcome back! ${msg}`, icon: './icons/icon-192.png' });
       }
       updateSessionStatsDisplay();
@@ -1903,108 +2588,343 @@ function handleTick(data) {
     }
   }
 
-  // ── Update timer display ──
+  // ── Update timer display & active counters ──
   if (state.session.active) {
-    if (state.session.sessionStartedAt) {
-      state.session.sessionTime = (state.session.accSessionMs || 0) + Math.max(0, now - state.session.sessionStartedAt);
-    }
-
-    // Recompute studyTime from the wall-clock anchor so there is one source of truth.
-    if (state.status === 'studying' && state.session.studyStartedAt !== null) {
-      const isStalled = state.camera.isDetecting &&
-                        (now - state.camera.lastDetectionTime > CONFIG.stallThresholdMs);
-
+    if (state.status === 'studying') {
       if (isStalled) {
-        // Tab is backgrounded and detection stopped. Freeze the anchor so we
-        // don't count unverified time, but track how much was skipped.
-        state.session.unverifiedTime += gap;
-        // Keep studyStartedAt fixed — do not advance accStudyMs yet.
+        // Camera stalled / video not ready / failing frames: freeze verified study and accrue unverified time
+        if (state.session.studyStartedAt !== null) {
+          if (hasMonotonic) {
+            state.session.accStudyMs = Math.max(
+              state.session.studyTime || 0,
+              (state.session.accStudyMs || 0) + (state.session.studyRunMs || 0)
+            );
+            state.session.studyTime = state.session.accStudyMs;
+            state.session.studyRunMs = 0;
+            state.session.studyStartedAt = null;
+            state.session.studyCursorMono = null;
+            if (state.session.unverifiedStartedAt === null) {
+              state.session.unverifiedStartedAt = state.lastTickTimestamp || now;
+              state.session.unverifiedCursorMono = state.lastTickMonotonic;
+              state.session.unverifiedRunMs = 0;
+            }
+          } else {
+            const stallStart = Math.max(state.session.studyStartedAt, latestFrameWall || lastTick);
+            state.session.accStudyMs = (state.session.accStudyMs || 0) + Math.max(0, stallStart - state.session.studyStartedAt);
+            state.session.studyTime = Math.max(state.session.studyTime || 0, state.session.accStudyMs);
+            state.session.studyStartedAt = null;
+            if (state.session.unverifiedStartedAt === null) {
+              state.session.unverifiedStartedAt = stallStart;
+            }
+          }
+        }
+        if (state.session.unverifiedStartedAt === null) {
+          state.session.unverifiedStartedAt = now;
+          state.session.unverifiedCursorMono = state.lastTickMonotonic;
+          state.session.unverifiedRunMs = 0;
+        }
+        if (hasMonotonic) {
+          const uCursor = typeof state.session.unverifiedCursorMono === 'number'
+            ? state.session.unverifiedCursorMono
+            : state.lastTickMonotonic;
+          const uStep = (uCursor !== null && uCursor !== undefined)
+            ? Math.max(0, monotonicNow - uCursor)
+            : monotonicDelta;
+          state.session.unverifiedRunMs = (state.session.unverifiedRunMs || 0) + uStep;
+          state.session.unverifiedCursorMono = monotonicNow;
+          state.session.unverifiedTime = Math.max(
+            state.session.unverifiedTime || 0,
+            (state.session.accUnverifiedMs || 0) + state.session.unverifiedRunMs
+          );
+        } else {
+          const elapsedUnverified = Math.max(0, now - state.session.unverifiedStartedAt);
+          state.session.unverifiedTime = Math.max(
+            state.session.unverifiedTime || 0,
+            (state.session.accUnverifiedMs || 0) + elapsedUnverified
+          );
+        }
       } else {
-        state.session.studyTime = state.session.accStudyMs +
-                                  (now - state.session.studyStartedAt);
+        // Camera healthy: if recovering from stall, finalize unverified interval cleanly WITHOUT retroactive study credit
+        if (state.session.unverifiedStartedAt !== null) {
+          if (hasMonotonic) {
+            const uCursor = typeof state.session.unverifiedCursorMono === 'number'
+              ? state.session.unverifiedCursorMono
+              : state.lastTickMonotonic;
+            const uStep = (uCursor !== null && uCursor !== undefined)
+              ? Math.max(0, monotonicNow - uCursor)
+              : monotonicDelta;
+            state.session.unverifiedRunMs = (state.session.unverifiedRunMs || 0) + uStep;
+            state.session.accUnverifiedMs = Math.max(
+              state.session.unverifiedTime || 0,
+              (state.session.accUnverifiedMs || 0) + state.session.unverifiedRunMs
+            );
+          } else {
+            state.session.accUnverifiedMs = (state.session.accUnverifiedMs || 0) +
+              Math.max(0, now - state.session.unverifiedStartedAt);
+          }
+          state.session.unverifiedTime = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs);
+          state.session.unverifiedRunMs = 0;
+          state.session.unverifiedCursorMono = null;
+          state.session.unverifiedStartedAt = null;
+          state.session.studyRunMs = 0;
+          state.session.studyStartedAt = now;
+          state.session.studyCursorMono = monotonicNow;
+        } else {
+          if (state.session.studyStartedAt === null) {
+            state.session.studyRunMs = 0;
+            state.session.studyStartedAt = now;
+            state.session.studyCursorMono = state.lastTickMonotonic ?? (hasMonotonic ? monotonicNow - monotonicDelta : null);
+          }
+          if (hasMonotonic) {
+            const sCursor = typeof state.session.studyCursorMono === 'number'
+              ? state.session.studyCursorMono
+              : state.lastTickMonotonic;
+            const studyStep = (sCursor !== null && sCursor !== undefined)
+              ? Math.max(0, monotonicNow - sCursor)
+              : monotonicDelta;
+            state.session.studyRunMs = (state.session.studyRunMs || 0) + studyStep;
+            state.session.studyCursorMono = monotonicNow;
+            state.session.studyTime = Math.max(
+              state.session.studyTime || 0,
+              (state.session.accStudyMs || 0) + state.session.studyRunMs
+            );
+          } else {
+            const elapsedStudy = Math.max(0, now - state.session.studyStartedAt);
+            state.session.studyTime = Math.max(
+              state.session.studyTime || 0,
+              (state.session.accStudyMs || 0) + elapsedStudy
+            );
+          }
+        }
+      }
+    } else {
+      // Paused: close any open unverified interval cleanly
+      if (state.session.unverifiedStartedAt !== null) {
+        if (hasMonotonic) {
+          state.session.accUnverifiedMs = Math.max(
+            state.session.unverifiedTime || 0,
+            (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0)
+          );
+        } else {
+          state.session.accUnverifiedMs = (state.session.accUnverifiedMs || 0) +
+            Math.max(0, now - state.session.unverifiedStartedAt);
+        }
+        state.session.unverifiedTime = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs);
+        state.session.unverifiedRunMs = 0;
+        state.session.unverifiedCursorMono = null;
+        state.session.unverifiedStartedAt = null;
       }
     }
+
+    // Advance any active open pause monotonically using exact cursor boundary
+    // so mid-tick pauses never count the same sub-tick interval as both study & pause
+    if (hasMonotonic && !isSleepGap && Array.isArray(state.session.pauses)) {
+      for (const p of state.session.pauses) {
+        if (p && p.end === null) {
+          const pCursor = typeof p.monoCursor === 'number'
+            ? p.monoCursor
+            : (typeof p.monoStart === 'number' ? p.monoStart : state.lastTickMonotonic);
+          const pauseStep = (pCursor !== null && pCursor !== undefined)
+            ? Math.max(0, monotonicNow - pCursor)
+            : Math.max(0, monotonicDelta);
+          p.monoDurationMs = Math.max(0, (typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)
+            ? p.monoDurationMs
+            : 0) + pauseStep);
+          p.monoCursor = monotonicNow;
+        }
+      }
+    }
+
+    // Active tracking session time = verified study + unverified active intervals (paused time excluded)
+    state.session.sessionTime = (state.session.studyTime || 0) + (state.session.unverifiedTime || 0);
+    // Recover paused time from pause intervals; guard monotonicity against backward wall-clock jumps
+    const computedPaused = calculateTotalPausedTime(state.session.pauses, now);
+    state.session.pausedTime = Math.max(state.session.pausedTime || 0, computedPaused);
 
     DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
     updateSessionStatsDisplay();
     updatePiP();
-    saveTodayToLocalStorage();
+    refreshTabLock();
+    saveTodayToLocalStorage(now);
 
     if (DOM.liveSession) DOM.liveSession.textContent = Math.round(state.session.sessionTime / 1000);
-    if (DOM.liveStudy) DOM.liveStudy.textContent   = Math.round(state.session.studyTime   / 1000);
-    if (DOM.livePauses) DOM.livePauses.textContent  =
-      state.session.distractions.lookAway +
-      state.session.distractions.away +
-      state.session.distractions.lidClosed;
+    if (DOM.liveStudy) DOM.liveStudy.textContent = Math.round(state.session.studyTime / 1000);
+    if (DOM.livePauses) DOM.livePauses.textContent =
+      (state.session.distractions?.lookAway || 0) +
+      (state.session.distractions?.away || 0) +
+      (state.session.distractions?.lidClosed || 0);
   }
 
   state.lastTickTimestamp = now;
+  if (hasMonotonic) {
+    state.lastTickMonotonic = monotonicNow;
+  }
 }
 
 /**
  * Handle day boundary crossing at midnight.
- * Saves yesterday's learned time to its daily record, then starts
- * today's fresh counter for the new day.
+ * Splits study, unverified, and paused intervals cleanly at 00:00:00 without
+ * converting unverified stall intervals to verified study time or crediting sleep.
  */
-function handleMidnightRollover(now, newDateStr) {
+function handleMidnightRollover(now, newDateStr, sleepAnchor = null, stallContext = null) {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   const boundaryTime = d.getTime();
+  const isSleep = Boolean(sleepAnchor);
+  const yesterdayLimit = sleepAnchor ? Math.min(boundaryTime, sleepAnchor) : boundaryTime;
 
-  // 1. Finalize yesterday's portion
+  const prevTickTime = state.lastTickTimestamp || boundaryTime;
+  const stallDetected = Boolean(
+    (stallContext && stallContext.isStalled) ||
+    state.session.unverifiedStartedAt !== null ||
+    (state.camera.isDetecting && state.camera.frameSeq === 0 && (state.camera.lastFrameTime || state.camera.lastDetectionTime || 0) === 0)
+  );
+
+  // 1. Finalize yesterday's verified study time
   if (state.status === 'studying' && state.session.studyStartedAt !== null) {
-    const yesterdayStudy = Math.max(0, boundaryTime - state.session.studyStartedAt);
-    state.session.accStudyMs += yesterdayStudy;
-    state.session.studyTime = state.session.accStudyMs;
+    if (state.lastTickMonotonic !== null) {
+      const committedUpToTick = (state.session.accStudyMs || 0) + (state.session.studyRunMs || 0);
+      if (stallDetected) {
+        // Camera stalled before/at rollover: do not add post-tick stall time as study
+        state.session.accStudyMs = Math.max(state.session.studyTime || 0, committedUpToTick);
+      } else {
+        const deltaBeforeMidnight = Math.max(0, yesterdayLimit - prevTickTime);
+        state.session.accStudyMs = Math.max(state.session.studyTime || 0, committedUpToTick) + deltaBeforeMidnight;
+      }
+    } else {
+      const studyCutoff = stallDetected
+        ? Math.min(yesterdayLimit, Math.max(state.session.studyStartedAt, stallContext?.latestFrameWall || prevTickTime))
+        : yesterdayLimit;
+      const yesterdayStudy = Math.max(0, studyCutoff - state.session.studyStartedAt);
+      state.session.accStudyMs = (state.session.accStudyMs || 0) + yesterdayStudy;
+    }
+    state.session.studyTime = Math.max(0, state.session.accStudyMs);
+    state.session.studyRunMs = 0;
+    state.session.studyStartedAt = null;
   }
-  if (state.session.sessionStartedAt) {
-    const yesterdaySession = Math.max(0, boundaryTime - state.session.sessionStartedAt);
-    state.session.sessionTime = (state.session.accSessionMs || 0) + yesterdaySession;
+
+  // 2. Finalize yesterday's unverified time WITHOUT double-counting
+  let yesterdayUnverified = 0;
+  if (state.session.unverifiedStartedAt !== null) {
+    if (state.lastTickMonotonic !== null) {
+      const runSoFar = (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0);
+      const deltaBeforeMidnight = isSleep ? 0 : Math.max(0, yesterdayLimit - prevTickTime);
+      yesterdayUnverified = Math.max(state.session.unverifiedTime || 0, runSoFar) + deltaBeforeMidnight;
+    } else {
+      yesterdayUnverified = (state.session.accUnverifiedMs || 0) +
+        Math.max(0, yesterdayLimit - state.session.unverifiedStartedAt);
+    }
+  } else if (state.status === 'studying' && stallDetected && !isSleep) {
+    // Stall discovered right at the midnight rollover tick
+    const stallStart = Math.min(yesterdayLimit, stallContext?.latestFrameWall || prevTickTime);
+    yesterdayUnverified = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs || 0) +
+      Math.max(0, yesterdayLimit - stallStart);
+  } else {
+    yesterdayUnverified = Math.max(state.session.unverifiedTime || 0, state.session.accUnverifiedMs || 0);
   }
-  state.session.endTime = boundaryTime;
-  state.session.lastSaved = boundaryTime;
+  state.session.sessionStartedAt = null;
+
+  // 3. Preserve paused intervals split at yesterdayLimit (excluding post-sleep downtime)
+  const existingPauses = Array.isArray(state.session.pauses) ? state.session.pauses : [];
+  const openPause = existingPauses.find(p => p && p.end === null) || null;
+  const yesterdayPauses = existingPauses.map(p => {
+    if (!p || p.end !== null) return p;
+    const closed = { ...p, end: Math.max(p.start, yesterdayLimit) };
+    if (typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)) {
+      closed.durationMs = Math.max(0, p.monoDurationMs);
+    }
+    return closed;
+  });
+
+  const yesterdayPaused = calculateTotalPausedTime(yesterdayPauses, yesterdayLimit);
+  const yesterdaySession = (state.session.studyTime || 0) + yesterdayUnverified;
 
   const yesterdayRecord = {
     id: state.session.id,
     date: state.session.dateStr,
-    startTime: state.session.startTime || boundaryTime,
+    startTime: state.session.startTime || (boundaryTime - (yesterdaySession + yesterdayPaused)),
     endTime: boundaryTime,
-    studyTime: state.session.studyTime,
-    sessionTime: state.session.sessionTime,
-    pausedTime: Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0)),
-    unverifiedTime: state.session.unverifiedTime || 0,
-    distractions: { ...state.session.distractions },
-    pauses: [...(state.session.pauses || [])],
+    studyTime: state.session.studyTime || 0,
+    sessionTime: yesterdaySession,
+    pausedTime: yesterdayPaused,
+    unverifiedTime: yesterdayUnverified,
+    distractions: { ...(state.session.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
+    pauses: yesterdayPauses,
     lastSaved: boundaryTime,
+    schemaVersion: 2,
+    tabId: TAB_ID,
   };
 
   DB.saveSession(yesterdayRecord).catch(e => console.warn('Could not archive yesterday record:', e));
 
-  // 2. Initialize new day's record starting from 00:00:00
-  const isStudying = state.status === 'studying';
-  const todayStudy = isStudying ? Math.max(0, now - boundaryTime) : 0;
-  const todaySession = Math.max(0, now - boundaryTime);
+  // 4. Initialize new day's record starting cleanly at 00:00:00, preserving stall/pause classifications
+  const wasStudying = state.status === 'studying';
+  const postMidnightMs = Math.max(0, now - boundaryTime);
+
+  let todayStudy = 0;
+  let todayUnverified = 0;
+  let todaySession = 0;
+  let todayPaused = 0;
+  let todayPauses = [];
+  let todayStudyStartedAt = null;
+  let todayUnverifiedStartedAt = null;
+
+  if (isSleep) {
+    setStatus('lid-closed');
+    todayPauses = [{
+      type: 'lidClosed',
+      start: now,
+      end: null,
+      ...(state.lastTickMonotonic !== null ? { monoDurationMs: 0 } : {}),
+    }];
+    todayPaused = 0;
+  } else if (wasStudying && stallDetected) {
+    // Camera is stalled across midnight: today's portion stays UNVERIFIED, never converted to study!
+    todayStudy = 0;
+    todayUnverified = postMidnightMs;
+    todaySession = todayUnverified;
+    todayStudyStartedAt = null;
+    todayUnverifiedStartedAt = (state.lastTickMonotonic !== null) ? now : boundaryTime;
+  } else if (wasStudying) {
+    todayStudy = postMidnightMs;
+    todaySession = todayStudy;
+    todayStudyStartedAt = (state.lastTickMonotonic !== null) ? now : boundaryTime;
+  } else {
+    const pauseType = openPause?.type || state.status || 'away';
+    const nextPause = { type: pauseType, start: boundaryTime, end: null };
+    if (state.lastTickMonotonic !== null) {
+      nextPause.monoDurationMs = postMidnightMs;
+    }
+    todayPauses = [nextPause];
+    todayPaused = calculateTotalPausedTime(todayPauses, now);
+  }
 
   state.session = {
     active: true,
     id: 'day_' + newDateStr,
     dateStr: newDateStr,
     startTime: boundaryTime,
-    sessionStartedAt: boundaryTime,
-    studyStartedAt: isStudying ? boundaryTime : null,
-    accStudyMs: 0,
+    sessionStartedAt: isSleep ? now : boundaryTime,
+    studyStartedAt: todayStudyStartedAt,
+    unverifiedStartedAt: todayUnverifiedStartedAt,
+    accStudyMs: (state.lastTickMonotonic !== null) ? todayStudy : 0,
     accSessionMs: 0,
+    accUnverifiedMs: (state.lastTickMonotonic !== null) ? todayUnverified : 0,
+    studyRunMs: 0,
+    unverifiedRunMs: 0,
     studyTime: todayStudy,
     sessionTime: todaySession,
-    unverifiedTime: 0,
-    distractions: { lookAway: 0, away: 0, lidClosed: 0 },
-    pauses: [],
+    unverifiedTime: todayUnverified,
+    pausedTime: todayPaused,
+    distractions: { lookAway: 0, away: 0, lidClosed: isSleep ? 1 : 0 },
+    pauses: todayPauses,
     lastSaved: now,
+    schemaVersion: 2,
   };
 
   DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
   updateSessionStatsDisplay();
-  saveTodayToLocalStorage();
+  saveTodayToLocalStorage(now);
   autoSaveSession();
   refreshDashboard();
 
@@ -2014,10 +2934,212 @@ function handleMidnightRollover(now, newDateStr) {
 
 
 // ═══════════════════════════════════════════════
-// 22. SESSION — Start / End
+// 22. SESSION — Start / End & Multi-Tab Conflict Guard
 // ═══════════════════════════════════════════════
 
+const TAB_ID = 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+const ACTIVE_TAB_LOCK_KEY = 'ayush_tracker_active_tab';
+const ACTIVE_TAB_LOCK_TTL_MS = 15000;
+const WEB_LOCK_NAME = 'ayush_tracker_session_lock';
+const _webLockReleasers = new Map();
+
+function readTabLock() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(ACTIVE_TAB_LOCK_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeTabLockMirror(lockObj) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (lockObj) {
+        localStorage.setItem(ACTIVE_TAB_LOCK_KEY, JSON.stringify(lockObj));
+      } else {
+        localStorage.removeItem(ACTIVE_TAB_LOCK_KEY);
+      }
+    }
+  } catch (_) { }
+}
+
+function isLockConflicting(lock, now, dateStr, tabId, monotonicNow = null) {
+  if (!lock || !lock.tabId) return false;
+  if (lock.tabId === tabId) return false;
+  if (lock.dateStr && dateStr && lock.dateStr !== dateStr) return false;
+  if (typeof monotonicNow === 'number' && Number.isFinite(monotonicNow) &&
+      typeof lock.updatedMono === 'number' && Number.isFinite(lock.updatedMono)) {
+    const monoAge = monotonicNow - lock.updatedMono;
+    return monoAge < ACTIVE_TAB_LOCK_TTL_MS;
+  }
+  const age = now - (lock.updatedAt || 0);
+  // Backward wall-clock jumps (age < 0) must NEVER expire or steal another tab's active lock
+  if (age < 0) return true;
+  return age < ACTIVE_TAB_LOCK_TTL_MS;
+}
+
+/**
+ * Fast synchronous check against the localStorage lock mirror.
+ */
+function checkTabConflict(now = Date.now(), dateStr = getLocalDateString(now), tabId = TAB_ID, monotonicNow = null) {
+  return isLockConflicting(readTabLock(), now, dateStr, tabId, monotonicNow);
+}
+
+function tryAcquireWebLock(tabId = TAB_ID, lockName = WEB_LOCK_NAME) {
+  if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') {
+    return Promise.resolve(null); // Web Locks API unavailable — use IndexedDB atomic fallback
+  }
+  if (_webLockReleasers.has(tabId)) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    try {
+      navigator.locks.request(lockName, { ifAvailable: true }, (lock) => {
+        if (!lock) {
+          settled = true;
+          resolve(false);
+          return;
+        }
+        return new Promise((releaseHold) => {
+          _webLockReleasers.set(tabId, () => {
+            _webLockReleasers.delete(tabId);
+            releaseHold();
+          });
+          settled = true;
+          resolve(true);
+        });
+      }).catch(() => {
+        if (!settled) resolve(null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function releaseWebLock(tabId = TAB_ID) {
+  const releaser = _webLockReleasers.get(tabId);
+  if (typeof releaser === 'function') {
+    releaser();
+  }
+}
+
+/**
+ * Race-safe, fail-closed tracking lock acquisition:
+ * 1. Prefers the browser Web Locks API (`navigator.locks.request` with `ifAvailable: true`).
+ * 2. Uses an atomic IndexedDB `readwrite` transaction on `'locks'` as serialized fallback.
+ * 3. Never treats non-atomic `localStorage` check-then-write as a successful lock: if BOTH
+ *    Web Locks and IndexedDB locking fail/are unavailable, returns `false` safely.
+ */
+async function acquireTabLock(now = Date.now(), dateStr = getLocalDateString(now), tabId = TAB_ID, monotonicNow = null) {
+  // Fast hint rejection if mirror clearly indicates another live tab
+  if (checkTabConflict(now, dateStr, tabId, monotonicNow)) {
+    return false;
+  }
+
+  const webLockResult = await tryAcquireWebLock(tabId);
+  if (webLockResult === false) {
+    return false;
+  }
+
+  try {
+    const idbResult = await DB.atomicAcquireLock({
+      tabId,
+      dateStr,
+      now,
+      ttlMs: ACTIVE_TAB_LOCK_TTL_MS,
+      monotonicNow,
+    });
+    if (!idbResult.acquired) {
+      releaseWebLock(tabId);
+      return false;
+    }
+    writeTabLockMirror(idbResult.lock);
+    return true;
+  } catch (_) {
+    // Only consider lock acquired if Web Locks API is actively held by this tab
+    if (webLockResult === true && _webLockReleasers.has(tabId)) {
+      writeTabLockMirror({
+        tabId,
+        dateStr,
+        startedAt: now,
+        updatedAt: now,
+        ...(typeof monotonicNow === 'number' ? { updatedMono: monotonicNow } : {}),
+      });
+      return true;
+    }
+    // Fail-safe: refuse simultaneous tracking when neither Web Locks nor atomic IDB succeeded
+    releaseWebLock(tabId);
+    return false;
+  }
+}
+
+/**
+ * Atomically refresh active tab lock heartbeat.
+ * Fails closed (`false`) if ownership cannot be verified or lock is missing/stolen.
+ */
+async function refreshTabLock(now = Date.now(), dateStr = state.session.dateStr || getLocalDateString(now), tabId = TAB_ID, monotonicNow = null) {
+  if (checkTabConflict(now, dateStr, tabId, monotonicNow)) {
+    return false;
+  }
+  try {
+    const res = await DB.atomicRefreshLock({
+      tabId,
+      dateStr,
+      now,
+      ttlMs: ACTIVE_TAB_LOCK_TTL_MS,
+      monotonicNow,
+    });
+    if (!res.ok) {
+      return false;
+    }
+    if (res.lock) writeTabLockMirror(res.lock);
+    return true;
+  } catch (_) {
+    // Never claim successful refresh unless Web Locks is actively held by this tab
+    if (_webLockReleasers.has(tabId)) {
+      return true;
+    }
+    return false;
+  }
+}
+
+/**
+ * Release the tracking lock ONLY if owned by `tabId`.
+ * Releasing from another tab cannot release this tab's lock.
+ */
+async function releaseTabLock(tabId = TAB_ID) {
+  releaseWebLock(tabId);
+  try {
+    const localLock = readTabLock();
+    if (!localLock || localLock.tabId === tabId) {
+      writeTabLockMirror(null);
+    }
+  } catch (_) { }
+  try {
+    await DB.atomicReleaseLock(tabId);
+  } catch (_) { }
+}
+
 async function handleStart() {
+  if (initPromise) {
+    try { await initPromise; } catch (_) { }
+  }
+
+  const preStartNow = Date.now();
+  const preStartDate = getLocalDateString(preStartNow);
+  if (checkTabConflict(preStartNow, preStartDate) || !(await acquireTabLock(preStartNow, preStartDate))) {
+    showToast('warning', 'Session active in another tab',
+      'Another browser tab is already tracking today\'s session. End it there before starting here to avoid data conflicts.');
+    showLiveError('Another tab is actively tracking. Close or end that tab first.');
+    DOM.startBtn.disabled = false;
+    updateStartButtonLabel();
+    return false;
+  }
+
   DOM.startBtn.disabled = true;
   hideLiveError();
   logEvent('Start button clicked');
@@ -2031,9 +3153,10 @@ async function handleStart() {
     DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Loading AI Model…';
     const landmarkerReady = await initFaceLandmarker();
     if (!landmarkerReady) {
+      await releaseTabLock();
       DOM.startBtn.disabled = false;
       updateStartButtonLabel();
-      return;
+      return false;
     }
   } else {
     updatePipeline('Model', 'active', '✅ Model Loaded');
@@ -2042,9 +3165,10 @@ async function handleStart() {
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Waiting for Camera…';
   const cameraReady = await startCamera();
   if (!cameraReady) {
+    await releaseTabLock();
     DOM.startBtn.disabled = false;
     updateStartButtonLabel();
-    return;
+    return false;
   }
 
   startDetectionLoop();
@@ -2055,15 +3179,27 @@ async function handleStart() {
   if (!calibrated) {
     stopDetectionLoop();
     stopCamera();
+    await releaseTabLock();
     DOM.startBtn.disabled = false;
     updateStartButtonLabel();
-    return;
+    return false;
+  }
+
+  const now = Date.now();
+  const dateStr = getLocalDateString(now);
+  if (!(await refreshTabLock(now, dateStr))) {
+    stopDetectionLoop();
+    stopCamera();
+    await releaseTabLock();
+    showToast('warning', 'Session active in another tab',
+      'Another browser tab holds the active session lock.');
+    DOM.startBtn.disabled = false;
+    updateStartButtonLabel();
+    return false;
   }
 
   startWorker();
 
-  const now = Date.now();
-  const dateStr = getLocalDateString(now);
   const dayId = 'day_' + dateStr;
 
   // If calendar day changed since last run, reset
@@ -2072,20 +3208,35 @@ async function handleStart() {
     state.session.studyTime = 0;
     state.session.accSessionMs = 0;
     state.session.sessionTime = 0;
+    state.session.accUnverifiedMs = 0;
+    state.session.unverifiedTime = 0;
+    state.session.studyRunMs = 0;
+    state.session.unverifiedRunMs = 0;
+    state.session.pausedTime = 0;
+    state.session.distractions = { lookAway: 0, away: 0, lidClosed: 0 };
+    state.session.pauses = [];
   }
 
   const baseStudyMs = state.session.studyTime || state.session.accStudyMs || 0;
-  const baseSessionMs = state.session.sessionTime || state.session.accSessionMs || 0;
+  const baseUnverifiedMs = state.session.unverifiedTime || state.session.accUnverifiedMs || 0;
+  const baseSessionMs = baseStudyMs + baseUnverifiedMs;
 
   state.session.active = true;
   state.session.id = dayId;
   state.session.dateStr = dateStr;
   state.session.startTime = state.session.startTime || now;
   state.session.studyStartedAt = now;
-  state.session.sessionStartedAt = now;
+  state.session.studyCursorMono = getMonotonicNow();
+  state.session.sessionStartedAt = null;
+  state.session.unverifiedStartedAt = null;
+  state.session.unverifiedCursorMono = null;
   state.session.accStudyMs = baseStudyMs;
   state.session.accSessionMs = baseSessionMs;
+  state.session.accUnverifiedMs = baseUnverifiedMs;
+  state.session.studyRunMs = 0;
+  state.session.unverifiedRunMs = 0;
   state.session.studyTime = baseStudyMs;
+  state.session.unverifiedTime = baseUnverifiedMs;
   state.session.sessionTime = baseSessionMs;
   if (!state.session.distractions) {
     state.session.distractions = { lookAway: 0, away: 0, lidClosed: 0 };
@@ -2093,6 +3244,8 @@ async function handleStart() {
   if (!state.session.pauses) {
     state.session.pauses = [];
   }
+  state.session.pausedTime = calculateTotalPausedTime(state.session.pauses, now);
+  state.session.schemaVersion = 2;
 
   state.headPose.lookAwayStart = 0;
   state.headPose.awayStart = 0;
@@ -2103,8 +3256,7 @@ async function handleStart() {
   if (DOM.sessionStats) DOM.sessionStats.classList.add('visible');
   DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
   if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
-  const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0));
-  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime);
   setStatus('studying');
   hideAlert();
 
@@ -2112,45 +3264,83 @@ async function handleStart() {
   updateStartButtonLabel();
 
   // Save current progress immediately to localStorage & IndexedDB
-  saveTodayToLocalStorage();
+  saveTodayToLocalStorage(now);
   await autoSaveSession();
 
   // Autosave every 15 seconds while a session is active
+  if (state.autoSaveInterval) clearInterval(state.autoSaveInterval);
   state.autoSaveInterval = setInterval(autoSaveSession, 15000);
+  return true;
 }
 
-function handleEnd() {
-  clearInterval(state.autoSaveInterval);
+function handleEnd(endTime = Date.now(), endMonotonic = null) {
+  if (state.autoSaveInterval) {
+    clearInterval(state.autoSaveInterval);
+    state.autoSaveInterval = null;
+  }
 
   // Set session inactive FIRST so no incoming worker ticks or events can advance it
   state.session.active = false;
+  const resolvedMono = (typeof endMonotonic === 'number' && Number.isFinite(endMonotonic))
+    ? endMonotonic
+    : (state.worker ? getMonotonicNow() : null);
+
+  // Finalize intervals BEFORE resetting monotonic anchors
+  if (state.status === 'studying') {
+    freezeStudyTime(endTime, resolvedMono);
+  }
+  // Close any open pause event at endTime/resolvedMono
+  endPauseEvent(endTime, resolvedMono);
+
+  // Close any ongoing unverified interval
+  if (state.session.unverifiedStartedAt !== null) {
+    if (resolvedMono !== null && typeof state.session.unverifiedCursorMono === 'number') {
+      const extraMono = Math.max(0, resolvedMono - state.session.unverifiedCursorMono);
+      state.session.accUnverifiedMs = Math.max(
+        state.session.unverifiedTime || 0,
+        (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0)
+      ) + extraMono;
+    } else if (state.lastTickMonotonic !== null) {
+      const refTime = state.lastTickTimestamp || endTime;
+      const subTick = (endTime > refTime && (endTime - refTime) <= CONFIG.maxTickMs) ? (endTime - refTime) : 0;
+      state.session.accUnverifiedMs = Math.max(
+        state.session.unverifiedTime || 0,
+        (state.session.accUnverifiedMs || 0) + (state.session.unverifiedRunMs || 0)
+      ) + subTick;
+    } else {
+      state.session.accUnverifiedMs = (state.session.accUnverifiedMs || 0) +
+        Math.max(0, endTime - state.session.unverifiedStartedAt);
+    }
+    state.session.unverifiedTime = Math.max(0, state.session.accUnverifiedMs);
+    state.session.unverifiedRunMs = 0;
+    state.session.unverifiedCursorMono = null;
+    state.session.unverifiedStartedAt = null;
+  }
 
   stopDetectionLoop();
   stopCamera();
   stopWorker();
+  releaseTabLock();
 
-  // Freeze at end time so studyTime is final before we read it.
-  const endTime = Date.now();
-  if (state.status === 'studying') freezeStudyTime(endTime);
-  // Close any open pause event.
-  endPauseEvent(endTime);
+  state.session.sessionStartedAt = null;
+  const finalStudyTime = Math.max(0, state.session.studyTime || 0);
+  const finalUnverifiedTime = Math.max(0, state.session.unverifiedTime || 0);
+  // Authoritative session time = verified study + unverified active time (paused time strictly excluded)
+  const finalSessionTime = finalStudyTime + finalUnverifiedTime;
+  const finalPausedTime = calculateTotalPausedTime(state.session.pauses, endTime);
 
-  if (state.session.sessionStartedAt) {
-    const elapsedSession = Math.max(0, endTime - state.session.sessionStartedAt);
-    state.session.sessionTime = (state.session.accSessionMs || 0) + elapsedSession;
-    state.session.accSessionMs = state.session.sessionTime;
-    state.session.sessionStartedAt = null;
-  }
-
-  const finalStudyTime  = state.session.studyTime;
-  const finalSessionTime = state.session.sessionTime;
-  const pausedTime = Math.max(0, finalSessionTime - finalStudyTime - (state.session.unverifiedTime || 0));
+  state.session.studyTime = finalStudyTime;
+  state.session.unverifiedTime = finalUnverifiedTime;
+  state.session.sessionTime = finalSessionTime;
+  state.session.pausedTime = finalPausedTime;
+  state.session.endTime = endTime;
+  state.session.schemaVersion = 2;
 
   DOM.startBtn.classList.remove('hidden');
   DOM.endBtn.classList.add('hidden');
   if (DOM.sessionStats) DOM.sessionStats.classList.remove('visible');
   if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(finalSessionTime);
-  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedTime);
+  if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(finalPausedTime);
   DOM.timerDisplay.textContent = formatTime(finalStudyTime);
   setStatus('idle');
   hideAlert();
@@ -2159,12 +3349,17 @@ function handleEnd() {
   showToast('info', 'Session saved',
     `Today's total learned time: ${formatDuration(finalStudyTime)}. Ready to continue whenever you are! 🎉`);
 
-  // Final save with endTime set.
-  saveTodayToLocalStorage();
+  // Build and persist identical authoritative final record to both localStorage and IndexedDB
   const record = buildSessionRecord(endTime);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem('ayush_tracker_today', JSON.stringify(record));
+    } catch (_) { }
+  }
   DB.saveSession(record)
     .then(() => refreshDashboard())
     .catch(e => showToast('error', 'Save failed', 'Could not save session: ' + e));
+  return record;
 }
 
 // ═══════════════════════════════════════════════
@@ -2172,48 +3367,275 @@ function handleEnd() {
 // ═══════════════════════════════════════════════
 
 /**
- * Build a plain-object record from live session state for today.
- * @param {number|null} endTime — if set, timestamp when paused or stopped.
+ * Normalize a persisted or legacy session record to the authoritative accounting model:
+ * - studyTime >= 0 (preserved)
+ * - pausedTime recovered from actual pause intervals when available (or preserved non-negatively)
+ * - unverifiedTime preserved (for legacy records missing unverifiedTime, preserves unaccounted active residual)
+ * - sessionTime = studyTime + unverifiedTime (paused time strictly excluded)
+ * - Idempotent across repeated calls without mutating source objects.
  */
-function buildSessionRecord(endTime = null) {
-  const s = state.session;
-  const now = endTime || Date.now();
-  const dateStr = s.dateStr || getLocalDateString(now);
+function normalizeSessionRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+  const closeRef = record.endTime || record.lastSaved || record.startTime || Date.now();
+  const dateStr = record.date || getLocalDateString(record.startTime || closeRef);
 
-  let studyTime = s.accStudyMs || 0;
-  if (s.active && state.status === 'studying' && s.studyStartedAt !== null) {
-    studyTime += Math.max(0, now - s.studyStartedAt);
-  } else {
-    studyTime = s.studyTime || s.accStudyMs || 0;
+  let hadUnclosedPauses = false;
+  const pauses = Array.isArray(record.pauses)
+    ? record.pauses
+      .filter(p => p && typeof p.start === 'number' && Number.isFinite(p.start))
+      .map(p => {
+        if (p.end === null) hadUnclosedPauses = true;
+        const endVal = (typeof p.end === 'number' && Number.isFinite(p.end))
+          ? Math.max(p.start, p.end)
+          : (record.endTime != null ? Math.max(p.start, closeRef) : null);
+        const next = { ...p, end: endVal };
+        // Preserve monotonic duration without inventing wall elapsed time across reloads/restarts
+        if (p.end === null && endVal !== null &&
+          typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)) {
+          next.durationMs = Math.max(0, p.monoDurationMs);
+        }
+        return next;
+      })
+    : [];
+
+  const studyTime = Math.max(0, Number(record.studyTime) || 0);
+  const pausedFromIntervals = calculateTotalPausedTime(pauses, closeRef);
+  const hasStoredPaused = typeof record.pausedTime === 'number' && Number.isFinite(record.pausedTime) && record.pausedTime >= 0;
+  const storedPaused = hasStoredPaused ? record.pausedTime : 0;
+  // Recover pausedTime from actual pause intervals when missing, unclosed, or previously wiped in legacy schema
+  const pausedTime = (!hasStoredPaused || hadUnclosedPauses || (storedPaused === 0 && pausedFromIntervals > 0 && !record.schemaVersion))
+    ? pausedFromIntervals
+    : storedPaused;
+
+  let unverifiedTime = 0;
+  if (typeof record.unverifiedTime === 'number' && Number.isFinite(record.unverifiedTime)) {
+    unverifiedTime = Math.max(0, record.unverifiedTime);
+  } else if (typeof record.sessionTime === 'number' && Number.isFinite(record.sessionTime)) {
+    // Legacy record written before unverifiedTime was tracked explicitly:
+    // preserve non-paused unaccounted active span as unverifiedTime so sessionTime doesn't drop.
+    unverifiedTime = Math.max(0, record.sessionTime - studyTime - pausedTime);
   }
 
-  const currentSegment = (s.active && s.sessionStartedAt) ? Math.max(0, now - s.sessionStartedAt) : 0;
-  const sessionTime = (s.accSessionMs || 0) + currentSegment;
-  const pausedTime = Math.max(0, sessionTime - studyTime - (s.unverifiedTime || 0));
+  // Canonical invariant: Session Time = Study Time + Unverified Time (Paused Time excluded)
+  const sessionTime = studyTime + unverifiedTime;
 
   return {
-    id:            s.id || ('day_' + dateStr),
-    date:          dateStr,
-    startTime:     s.startTime || now,
-    endTime:       endTime,          // null means active / ongoing today
+    ...record,
+    id: record.id || ('day_' + dateStr),
+    date: dateStr,
+    startTime: record.startTime || closeRef,
+    endTime: record.endTime ?? null,
     studyTime,
     sessionTime,
     pausedTime,
-    unverifiedTime: s.unverifiedTime || 0,
-    distractions:  { ...(s.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
-    pauses:        Array.isArray(s.pauses) ? s.pauses.map(p => ({ ...p })) : [],
-    lastSaved:     Date.now(),
+    unverifiedTime,
+    distractions: {
+      lookAway: Math.max(0, Number(record.distractions?.lookAway) || 0),
+      away: Math.max(0, Number(record.distractions?.away) || 0),
+      lidClosed: Math.max(0, Number(record.distractions?.lidClosed) || 0),
+    },
+    pauses,
+    lastSaved: record.lastSaved || closeRef,
+    schemaVersion: 2,
+  };
+}
+
+/**
+ * Build a plain-object record from live session state for today.
+ * @param {number|null} endTime — if set, timestamp when stopped/saved.
+ * @param {number|null} referenceNow — optional clock reference for pause evaluation.
+ */
+function buildSessionRecord(endTime = null, referenceNow = null) {
+  const s = state.session;
+  const evalNow = endTime || referenceNow || (
+    state.lastTickMonotonic !== null && state.lastTickTimestamp
+      ? state.lastTickTimestamp
+      : (s.lastSaved || Date.now())
+  );
+  const now = endTime || referenceNow || Date.now();
+  const dateStr = s.dateStr || getLocalDateString(evalNow);
+
+  let studyTime = s.studyTime || s.accStudyMs || 0;
+  let unverifiedTime = s.unverifiedTime || s.accUnverifiedMs || 0;
+
+  // Only extrapolate via wall clock when monotonic ticker is NOT active
+  if (state.lastTickMonotonic === null) {
+    if (s.active && state.status === 'studying' && s.studyStartedAt !== null) {
+      studyTime = Math.max(studyTime, (s.accStudyMs || 0) + Math.max(0, evalNow - s.studyStartedAt));
+    }
+    if (s.active && s.unverifiedStartedAt !== null) {
+      unverifiedTime = Math.max(unverifiedTime, (s.accUnverifiedMs || 0) + Math.max(0, evalNow - s.unverifiedStartedAt));
+    }
+  } else {
+    studyTime = Math.max(studyTime, (s.accStudyMs || 0) + (s.studyRunMs || 0));
+    unverifiedTime = Math.max(unverifiedTime, (s.accUnverifiedMs || 0) + (s.unverifiedRunMs || 0));
+  }
+
+  // Session time includes active tracking intervals only (study + unverified)
+  // Explicitly paused time is excluded from session time
+  const sessionTime = studyTime + unverifiedTime;
+  const pauseEvalTime = endTime || referenceNow || (
+    state.lastTickTimestamp && s.active ? state.lastTickTimestamp : (s.lastSaved || now)
+  );
+  const calculatedPaused = calculateTotalPausedTime(s.pauses, pauseEvalTime);
+  const pausedTime = (Array.isArray(s.pauses) && s.pauses.length > 0)
+    ? Math.max(s.pausedTime || 0, calculatedPaused)
+    : Math.max(0, s.pausedTime || 0);
+
+  return {
+    id: s.id || ('day_' + dateStr),
+    date: dateStr,
+    startTime: s.startTime || evalNow,
+    endTime: endTime,
+    studyTime,
+    sessionTime,
+    pausedTime,
+    unverifiedTime,
+    distractions: { ...(s.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
+    pauses: Array.isArray(s.pauses) ? s.pauses.map(p => ({ ...p })) : [],
+    lastSaved: endTime || referenceNow || Date.now(),
+    schemaVersion: 2,
+    tabId: TAB_ID,
+  };
+}
+
+/**
+ * Detect whether two records are duplicate/in-progress snapshots of the same session/day
+ * or two independent sessions that occurred on the same day.
+ */
+function isSameSessionOrSnapshot(recA, recB) {
+  if (!recA || !recB) return false;
+  // If both have explicit IDs and they differ (and neither is a daily rollup),
+  // they represent distinct independent sessions — never deduplicate them!
+  if (recA.id && recB.id && recA.id !== recB.id) {
+    const isDayA = typeof recA.id === 'string' && recA.id.startsWith('day_');
+    const isDayB = typeof recB.id === 'string' && recB.id.startsWith('day_');
+    if (!isDayA && !isDayB) {
+      return false; // Distinct independent sessions (e.g. sess_1 and sess_2)
+    }
+  }
+  // Identical record ID -> duplicate snapshot of the same session
+  if (recA.id && recB.id && recA.id === recB.id) return true;
+  // If BOTH are daily rollup records ('day_YYYY-MM-DD') for this date, they are daily snapshots
+  const isDayA = typeof recA.id === 'string' && recA.id.startsWith('day_');
+  const isDayB = typeof recB.id === 'string' && recB.id.startsWith('day_');
+  if (isDayA && isDayB && (recA.date === recB.date)) return true;
+  // If one record has no ID, or neither has an ID, and dates match and start times are identical (within 2s)
+  if (recA.date && recB.date && recA.date === recB.date) {
+    if (recA.startTime && recB.startTime && Math.abs(recA.startTime - recB.startTime) < 2000) return true;
+    if (!recA.id || !recB.id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Authoritatively reconcile two session records for the same day.
+ * - If they are duplicate snapshots of the same session: merges taking max verified times and deduplicating pauses.
+ * - If they are distinct independent sessions: safely sums active times and merges intervals.
+ */
+function reconcileSessionRecords(rawA, rawB) {
+  if (!rawA && !rawB) return null;
+  const recA = rawA ? normalizeSessionRecord(rawA) : null;
+  const recB = rawB ? normalizeSessionRecord(rawB) : null;
+  if (!recA) return { ...recB };
+  if (!recB) return { ...recA };
+
+  const isDuplicateSnapshot = isSameSessionOrSnapshot(recA, recB);
+
+  let studyTime = 0;
+  let sessionTime = 0;
+  let unverifiedTime = 0;
+  let pausedTime = 0;
+  let distractions = { lookAway: 0, away: 0, lidClosed: 0 };
+
+  if (isDuplicateSnapshot) {
+    studyTime = Math.max(recA.studyTime || 0, recB.studyTime || 0);
+    unverifiedTime = Math.max(recA.unverifiedTime || 0, recB.unverifiedTime || 0);
+    sessionTime = studyTime + unverifiedTime;
+    pausedTime = Math.max(recA.pausedTime || 0, recB.pausedTime || 0);
+
+    distractions = {
+      lookAway: Math.max(recA.distractions?.lookAway || 0, recB.distractions?.lookAway || 0),
+      away: Math.max(recA.distractions?.away || 0, recB.distractions?.away || 0),
+      lidClosed: Math.max(recA.distractions?.lidClosed || 0, recB.distractions?.lidClosed || 0),
+    };
+  } else {
+    // Independent sessions on the same date: sum time and distractions
+    studyTime = (recA.studyTime || 0) + (recB.studyTime || 0);
+    unverifiedTime = (recA.unverifiedTime || 0) + (recB.unverifiedTime || 0);
+    sessionTime = studyTime + unverifiedTime;
+    pausedTime = (recA.pausedTime || 0) + (recB.pausedTime || 0);
+
+    distractions = {
+      lookAway: (recA.distractions?.lookAway || 0) + (recB.distractions?.lookAway || 0),
+      away: (recA.distractions?.away || 0) + (recB.distractions?.away || 0),
+      lidClosed: (recA.distractions?.lidClosed || 0) + (recB.distractions?.lidClosed || 0),
+    };
+  }
+
+  const pausesMap = new Map();
+  [...(recA.pauses || []), ...(recB.pauses || [])].forEach(p => {
+    if (!p || typeof p.start !== 'number') return;
+    const key = `${p.type || 'pause'}_${p.start}`;
+    const existing = pausesMap.get(key);
+    if (!existing || (existing.end === null && typeof p.end === 'number')) {
+      pausesMap.set(key, { ...p });
+    }
+  });
+  const pauses = Array.from(pausesMap.values()).sort((a, b) => a.start - b.start);
+
+  const startTime = (recA.startTime && recB.startTime)
+    ? Math.min(recA.startTime, recB.startTime)
+    : (recA.startTime || recB.startTime || Date.now());
+
+  const endTime = recA.endTime && recB.endTime
+    ? Math.max(recA.endTime, recB.endTime)
+    : (recA.endTime || recB.endTime || null);
+
+  const lastSaved = Math.max(recA.lastSaved || 0, recB.lastSaved || 0) || Date.now();
+
+  return {
+    id: (isDuplicateSnapshot && (recA.id === recB.id))
+      ? recA.id
+      : ('day_' + (recA.date || recB.date)),
+    date: recA.date || recB.date,
+    startTime,
+    endTime,
+    studyTime,
+    sessionTime,
+    pausedTime,
+    unverifiedTime,
+    distractions,
+    pauses,
+    lastSaved,
+    schemaVersion: 2,
   };
 }
 
 /**
  * Synchronously persist today's state into localStorage so restarts,
  * reloads, or sudden browser exits never lose a single second.
+ * Reconciles rather than silently overwriting progress saved by another tab.
  */
-function saveTodayToLocalStorage() {
+function saveTodayToLocalStorage(referenceNow = null) {
   try {
-    const record = buildSessionRecord();
-    localStorage.setItem('ayush_tracker_today', JSON.stringify(record));
+    let record = buildSessionRecord(null, referenceNow);
+    if (typeof localStorage !== 'undefined') {
+      const existingRaw = localStorage.getItem('ayush_tracker_today');
+      if (existingRaw) {
+        try {
+          const existing = JSON.parse(existingRaw);
+          if (existing && existing.date === record.date && existing.tabId && existing.tabId !== TAB_ID) {
+            // Reconcile cross-tab draft instead of clobbering higher progress
+            record = reconcileSessionRecords(existing, record);
+            record.tabId = TAB_ID;
+          }
+        } catch (_) { }
+      }
+      localStorage.setItem('ayush_tracker_today', JSON.stringify(record));
+    }
     return record;
   } catch (e) {
     return null;
@@ -2222,38 +3644,64 @@ function saveTodayToLocalStorage() {
 
 /**
  * Synchronously load today's accumulated progress on startup.
+ * Normalizes legacy records and recovers pausedTime from actual pause events.
  */
 function loadTodayState() {
   const todayStr = getLocalDateString();
   let loaded = false;
 
   try {
-    const raw = localStorage.getItem('ayush_tracker_today');
+    const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem('ayush_tracker_today') : null;
     if (raw) {
-      const data = JSON.parse(raw);
-      if (data && data.date === todayStr) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.date === todayStr) {
+        // Close dangling open pauses at lastSaved before normalizing
+        const closeTime = parsed.lastSaved || parsed.endTime || parsed.startTime || Date.now();
+        const rawWithClosedPauses = {
+          ...parsed,
+          pauses: (Array.isArray(parsed.pauses) ? parsed.pauses : []).map(p => {
+            if (!p || p.end !== null) return p;
+            const closed = { ...p, end: Math.max(p.start, closeTime) };
+            if (typeof p.monoDurationMs === 'number' && Number.isFinite(p.monoDurationMs)) {
+              closed.durationMs = Math.max(0, p.monoDurationMs);
+            }
+            return closed;
+          }),
+        };
+        const data = normalizeSessionRecord(rawWithClosedPauses);
+
         state.session.id = data.id || ('day_' + todayStr);
         state.session.dateStr = todayStr;
         state.session.startTime = data.startTime || Date.now();
-        state.session.accStudyMs = data.studyTime || 0;
-        state.session.studyTime = data.studyTime || 0;
-        state.session.accSessionMs = data.sessionTime || 0;
-        state.session.sessionTime = data.sessionTime || 0;
-        state.session.unverifiedTime = data.unverifiedTime || 0;
-        state.session.distractions = data.distractions || { lookAway: 0, away: 0, lidClosed: 0 };
-        state.session.pauses = data.pauses || [];
+        state.session.endTime = data.endTime ?? null;
+        state.session.accStudyMs = data.studyTime;
+        state.session.studyTime = data.studyTime;
+        state.session.accSessionMs = data.sessionTime;
+        state.session.sessionTime = data.sessionTime;
+        state.session.accUnverifiedMs = data.unverifiedTime;
+        state.session.unverifiedTime = data.unverifiedTime;
+        state.session.studyRunMs = 0;
+        state.session.unverifiedRunMs = 0;
+        state.session.pauses = data.pauses;
+        state.session.pausedTime = data.pauses.length > 0
+          ? calculateTotalPausedTime(data.pauses, closeTime)
+          : data.pausedTime;
+        state.session.distractions = data.distractions;
         state.session.lastSaved = data.lastSaved || Date.now();
+        state.session.studyStartedAt = null;
+        state.session.sessionStartedAt = null;
+        state.session.unverifiedStartedAt = null;
+        state.session.schemaVersion = 2;
 
         DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
-        if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
-        const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - state.session.unverifiedTime);
-        if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
+        if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime || 0);
+        if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime || 0);
         updateStartButtonLabel();
         updateSessionStatsDisplay();
         loaded = true;
       } else {
         // From an earlier day: purge today cache
-        localStorage.removeItem('ayush_tracker_today');
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('ayush_tracker_today');
       }
     }
   } catch (e) {
@@ -2263,10 +3711,23 @@ function loadTodayState() {
   if (!loaded) {
     state.session.id = 'day_' + todayStr;
     state.session.dateStr = todayStr;
+    state.session.startTime = null;
+    state.session.endTime = null;
+    state.session.studyStartedAt = null;
+    state.session.sessionStartedAt = null;
+    state.session.unverifiedStartedAt = null;
     state.session.accStudyMs = 0;
     state.session.studyTime = 0;
     state.session.accSessionMs = 0;
     state.session.sessionTime = 0;
+    state.session.accUnverifiedMs = 0;
+    state.session.unverifiedTime = 0;
+    state.session.studyRunMs = 0;
+    state.session.unverifiedRunMs = 0;
+    state.session.pausedTime = 0;
+    state.session.distractions = { lookAway: 0, away: 0, lidClosed: 0 };
+    state.session.pauses = [];
+    state.session.schemaVersion = 2;
     DOM.timerDisplay.textContent = '00:00:00';
     if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
     if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
@@ -2279,9 +3740,17 @@ function loadTodayState() {
  */
 async function autoSaveSession() {
   if (!state.session.active && (state.session.studyTime || 0) === 0) return;
+  if (state.session.active && checkTabConflict()) {
+    console.warn('Concurrent tab conflict detected during autosave — skipping overwrite');
+    return;
+  }
   try {
     const record = saveTodayToLocalStorage();
-    if (record) await DB.saveSession(record);
+    if (record) {
+      await DB.saveSession(record).catch(e => {
+        console.warn('IndexedDB auto-save warning:', e);
+      });
+    }
   } catch (e) {
     showToast('error', 'Auto-save failed',
       'Could not save your study record to storage. ' + (e?.message || e));
@@ -2290,9 +3759,11 @@ async function autoSaveSession() {
 
 /**
  * On startup, finalize any unclosed sessions from previous days.
+ * Recovers pausedTime from actual pause intervals and normalizes records safely.
  */
 async function recoverUnfinishedSessions() {
   try {
+    if (!DB.db) await DB.init();
     const todayStr = getLocalDateString();
     const all = await new Promise((res, rej) => {
       const tx = DB.db.transaction(['sessions'], 'readwrite');
@@ -2306,18 +3777,29 @@ async function recoverUnfinishedSessions() {
     const store = tx.objectStore('sessions');
     let pastRecoveredCount = 0;
 
-    for (const s of all) {
-      const dStr = s.date || getLocalDateString(s.startTime || Date.now());
-      if (dStr < todayStr && s.endTime === null) {
-        s.endTime = s.lastSaved || s.startTime;
-        s.sessionTime = s.endTime - (s.startTime || s.endTime);
-        s.pausedTime = Math.max(0, s.sessionTime - (s.studyTime || 0) - (s.unverifiedTime || 0));
-        store.put(s);
+    for (const raw of all) {
+      const dStr = raw.date || getLocalDateString(raw.startTime || Date.now());
+      if (dStr < todayStr && raw.endTime === null) {
+        const endTime = raw.lastSaved || raw.startTime || Date.now();
+        const closedPauses = Array.isArray(raw.pauses)
+          ? raw.pauses.map(p => (p && p.end === null ? { ...p, end: Math.max(p.start, endTime) } : p))
+          : [];
+        const normalized = normalizeSessionRecord({
+          ...raw,
+          endTime,
+          pauses: closedPauses,
+        });
+        store.put(normalized);
         pastRecoveredCount++;
       }
     }
 
     if (pastRecoveredCount > 0) {
+      await new Promise((resolve) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        tx.onabort = () => resolve();
+      });
       showToast('info', 'Past session saved',
         `Previous study session from before today has been finalized and archived.`);
     }
@@ -2331,20 +3813,35 @@ async function recoverUnfinishedSessions() {
 // 22C. DATABASE (IndexedDB)
 // ═══════════════════════════════════════════════
 
+let storageEpoch = 0;
+let saveQueue = Promise.resolve();
+
+function queueStorageOperation(fn) {
+  const currentEpoch = storageEpoch;
+  saveQueue = saveQueue.then(async () => {
+    if (storageEpoch !== currentEpoch) return null;
+    return fn();
+  }).catch(err => {
+    console.warn('Storage operation failed:', err);
+    return null;
+  });
+  return saveQueue;
+}
+
 const DB = {
   db: null,
   name: 'ayush-tracker-db',
-  version: 1,
+  version: 2,
 
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.name, this.version);
-      request.onerror   = (e) => reject('IndexedDB error: ' + e.target.error);
+      request.onerror = (e) => reject('IndexedDB error: ' + e.target.error);
       request.onsuccess = async (e) => {
         this.db = e.target.result;
         try {
           await this.migrateFromOldDb();
-        } catch (_) {}
+        } catch (_) { }
         resolve();
       };
       request.onupgradeneeded = (e) => {
@@ -2353,57 +3850,244 @@ const DB = {
           const store = db.createObjectStore('sessions', { keyPath: 'id' });
           store.createIndex('startTime', 'startTime', { unique: false });
         }
+        if (!db.objectStoreNames.contains('locks')) {
+          db.createObjectStore('locks', { keyPath: 'id' });
+        }
       };
     });
   },
 
-  async migrateFromOldDb() {
-    try {
-      if (!('databases' in indexedDB)) return;
-      const dbs = await indexedDB.databases();
-      const oldDbExists = dbs.some(d => d.name === 'ai-spectator-db');
-      if (!oldDbExists) return;
-
-      const hasData = await new Promise(res => {
-        const tx = this.db.transaction(['sessions'], 'readonly');
-        const req = tx.objectStore('sessions').count();
-        req.onsuccess = () => res(req.result > 0);
-        req.onerror = () => res(false);
-      });
-      if (hasData) return;
-
-      const openReq = indexedDB.open('ai-spectator-db');
-      openReq.onsuccess = (e) => {
-        const oldDb = e.target.result;
-        if (!oldDb.objectStoreNames.contains('sessions')) {
-          oldDb.close();
-          return;
-        }
-        const tx = oldDb.transaction(['sessions'], 'readonly');
-        const req = tx.objectStore('sessions').getAll();
-        req.onsuccess = () => {
-          const oldSessions = req.result || [];
-          if (oldSessions.length > 0) {
-            const newTx = this.db.transaction(['sessions'], 'readwrite');
-            const newStore = newTx.objectStore('sessions');
-            oldSessions.forEach(s => newStore.put(s));
+  async atomicAcquireLock({ tabId, dateStr, now = Date.now(), ttlMs = ACTIVE_TAB_LOCK_TTL_MS, monotonicNow = null }) {
+    if (!this.db) await this.init();
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.db.transaction(['locks'], 'readwrite');
+        const store = tx.objectStore('locks');
+        let acquired = false;
+        let lockOut = null;
+        const getReq = store.get('active_session_lock');
+        getReq.onsuccess = () => {
+          const existing = getReq.result || null;
+          if (isLockConflicting(existing, now, dateStr, tabId, monotonicNow)) {
+            acquired = false;
+            lockOut = existing;
+            return;
           }
-          oldDb.close();
+          lockOut = {
+            id: 'active_session_lock',
+            tabId,
+            dateStr,
+            startedAt: (existing && existing.tabId === tabId) ? (existing.startedAt || now) : now,
+            updatedAt: now,
+            ...(typeof monotonicNow === 'number' && Number.isFinite(monotonicNow) ? { updatedMono: monotonicNow } : {}),
+          };
+          store.put(lockOut);
+          acquired = true;
         };
-        req.onerror = () => oldDb.close();
-      };
-    } catch (_) {}
+        getReq.onerror = () => {
+          acquired = false;
+        };
+        tx.oncomplete = () => resolve({ acquired, lock: lockOut });
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(new Error('Transaction aborted'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  },
+
+  async atomicRefreshLock({ tabId, dateStr, now = Date.now(), ttlMs = ACTIVE_TAB_LOCK_TTL_MS, monotonicNow = null }) {
+    if (!this.db) await this.init();
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.db.transaction(['locks'], 'readwrite');
+        const store = tx.objectStore('locks');
+        let ok = false;
+        let lockOut = null;
+        const getReq = store.get('active_session_lock');
+        getReq.onsuccess = () => {
+          const existing = getReq.result || null;
+          // Strict ownership verification: must exist AND be owned by this tabId
+          if (!existing || existing.tabId !== tabId || isLockConflicting(existing, now, dateStr, tabId, monotonicNow)) {
+            ok = false;
+            lockOut = existing;
+            return;
+          }
+          lockOut = {
+            id: 'active_session_lock',
+            tabId,
+            dateStr,
+            startedAt: existing.startedAt || now,
+            updatedAt: now,
+            ...(typeof monotonicNow === 'number' && Number.isFinite(monotonicNow) ? { updatedMono: monotonicNow } : {}),
+          };
+          store.put(lockOut);
+          ok = true;
+        };
+        getReq.onerror = () => {
+          ok = false;
+        };
+        tx.oncomplete = () => resolve({ ok, lock: lockOut });
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(new Error('Transaction aborted'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  },
+
+  async atomicReleaseLock(tabId) {
+    if (!this.db) await this.init();
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction(['locks'], 'readwrite');
+        const store = tx.objectStore('locks');
+        let released = false;
+        const getReq = store.get('active_session_lock');
+        getReq.onsuccess = () => {
+          const existing = getReq.result || null;
+          if (existing && existing.tabId === tabId) {
+            store.delete('active_session_lock');
+            released = true;
+          }
+        };
+        tx.oncomplete = () => resolve(released);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  },
+
+  async getActiveLock() {
+    if (!this.db) await this.init();
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction(['locks'], 'readonly');
+        const req = tx.objectStore('locks').get('active_session_lock');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  },
+
+  async migrateFromOldDb() {
+    return new Promise(async (resolve) => {
+      try {
+        if (typeof indexedDB === 'undefined' || !('databases' in indexedDB)) {
+          return resolve();
+        }
+        const dbs = await indexedDB.databases();
+        const oldDbExists = dbs.some(d => d.name === 'ai-spectator-db');
+        if (!oldDbExists) return resolve();
+
+        const hasData = await new Promise(res => {
+          const tx = this.db.transaction(['sessions'], 'readonly');
+          const req = tx.objectStore('sessions').count();
+          req.onsuccess = () => res(req.result > 0);
+          req.onerror = () => res(false);
+        });
+        if (hasData) return resolve();
+
+        const openReq = indexedDB.open('ai-spectator-db');
+        openReq.onsuccess = (e) => {
+          const oldDb = e.target.result;
+          if (!oldDb.objectStoreNames.contains('sessions')) {
+            oldDb.close();
+            return resolve();
+          }
+          const tx = oldDb.transaction(['sessions'], 'readonly');
+          const req = tx.objectStore('sessions').getAll();
+          req.onsuccess = () => {
+            const oldSessions = req.result || [];
+            if (oldSessions.length > 0) {
+              const newTx = this.db.transaction(['sessions'], 'readwrite');
+              const newStore = newTx.objectStore('sessions');
+              oldSessions.forEach(s => newStore.put(s));
+              newTx.oncomplete = () => {
+                oldDb.close();
+                resolve();
+              };
+              newTx.onerror = () => {
+                oldDb.close();
+                resolve();
+              };
+            } else {
+              oldDb.close();
+              resolve();
+            }
+          };
+          req.onerror = () => {
+            oldDb.close();
+            resolve();
+          };
+        };
+        openReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
   },
 
   async saveSession(data) {
     if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
-      const tx    = this.db.transaction(['sessions'], 'readwrite');
-      const store = tx.objectStore('sessions');
-      // put() inserts or replaces, so autosave can overwrite earlier drafts.
-      const req   = store.put(data);
-      req.onsuccess = () => resolve();
-      req.onerror   = () => reject(req.error);
+    const epochAtCall = storageEpoch;
+    return queueStorageOperation(async () => {
+      if (storageEpoch !== epochAtCall) {
+        return;
+      }
+
+      // Check active tab lock before writing shared day records
+      const nowLockCheck = Date.now();
+      const activeLock = await this.getActiveLock().catch(() => null);
+      if (isLockConflicting(activeLock, nowLockCheck, data.date, data.tabId || TAB_ID) && data.endTime === null) {
+        // Another live tab owns the active tracking lock; refuse stale non-owning write
+        return;
+      }
+
+      // Guard against concurrent tab overwrites on shared day_YYYY-MM-DD keys
+      let existing = null;
+      try {
+        existing = await new Promise((resolve) => {
+          const tx = this.db.transaction(['sessions'], 'readonly');
+          const req = tx.objectStore('sessions').get(data.id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      } catch (_) { }
+
+      if (storageEpoch !== epochAtCall) {
+        return;
+      }
+
+      let recordToPut = data;
+      if (existing) {
+        const fromDifferentTab = Boolean(existing.tabId && data.tabId && existing.tabId !== data.tabId);
+        const wouldRegress = (existing.studyTime || 0) > (data.studyTime || 0);
+        if (fromDifferentTab || wouldRegress) {
+          recordToPut = reconcileSessionRecords(existing, data);
+          if (data.tabId) recordToPut.tabId = data.tabId;
+        }
+      }
+
+      return new Promise((resolve, reject) => {
+        try {
+          if (storageEpoch !== epochAtCall) return resolve();
+          const tx = this.db.transaction(['sessions'], 'readwrite');
+          const store = tx.objectStore('sessions');
+          store.put(recordToPut);
+          tx.oncomplete = () => {
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
   },
 
@@ -2421,64 +4105,13 @@ const DB = {
   async getDailyRecords() {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {
-      const tx    = this.db.transaction(['sessions'], 'readonly');
+      const tx = this.db.transaction(['sessions'], 'readonly');
       const store = tx.objectStore('sessions');
-      const req   = store.getAll();
+      const req = store.getAll();
       req.onsuccess = () => {
         const all = req.result || [];
-        const daysMap = new Map();
-
-        all.forEach(item => {
-          const dStr = item.date || getLocalDateString(item.startTime || Date.now());
-          const dayId = 'day_' + dStr;
-          if (!daysMap.has(dayId)) {
-            daysMap.set(dayId, {
-              id: dayId,
-              date: dStr,
-              startTime: item.startTime || Date.now(),
-              endTime: item.endTime,
-              studyTime: 0,
-              sessionTime: 0,
-              pausedTime: 0,
-              unverifiedTime: 0,
-              distractions: { lookAway: 0, away: 0, lidClosed: 0 },
-              pauses: [],
-              lastSaved: item.lastSaved || item.startTime
-            });
-          }
-          const day = daysMap.get(dayId);
-          day.studyTime += (item.studyTime || 0);
-          day.sessionTime += (item.sessionTime || 0);
-          day.pausedTime += (item.pausedTime || 0);
-          day.unverifiedTime += (item.unverifiedTime || 0);
-          day.distractions.lookAway += (item.distractions?.lookAway || 0);
-          day.distractions.away += (item.distractions?.away || 0);
-          day.distractions.lidClosed += (item.distractions?.lidClosed || 0);
-          if (item.startTime && item.startTime < day.startTime) day.startTime = item.startTime;
-          if (item.endTime && (!day.endTime || item.endTime > day.endTime)) day.endTime = item.endTime;
-          if (item.lastSaved && (!day.lastSaved || item.lastSaved > day.lastSaved)) day.lastSaved = item.lastSaved;
-        });
-
-        // Overlay today's live/localStorage record
-        const todayStr = getLocalDateString();
-        const todayDayId = 'day_' + todayStr;
-        const currentToday = (state.session.studyTime > 0 || state.session.active)
-          ? buildSessionRecord()
-          : null;
-        if (currentToday && currentToday.date === todayStr) {
-          const existing = daysMap.get(todayDayId);
-          if (!existing) {
-            daysMap.set(todayDayId, currentToday);
-          } else {
-            existing.studyTime = Math.max(existing.studyTime, currentToday.studyTime);
-            existing.sessionTime = Math.max(existing.sessionTime, currentToday.sessionTime);
-            existing.distractions.lookAway = Math.max(existing.distractions.lookAway, currentToday.distractions.lookAway);
-            existing.distractions.away = Math.max(existing.distractions.away, currentToday.distractions.away);
-            existing.distractions.lidClosed = Math.max(existing.distractions.lidClosed, currentToday.distractions.lidClosed);
-          }
-        }
-
-        const sorted = Array.from(daysMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+        const dailyTotals = calculateDailyTotals(all);
+        const sorted = Object.values(dailyTotals).sort((a, b) => b.date.localeCompare(a.date));
         resolve(sorted);
       };
       req.onerror = () => reject(req.error);
@@ -2491,79 +4124,334 @@ const DB = {
 
   async consolidateToDaily() {
     if (!this.db) await this.init();
-    try {
-      const tx = this.db.transaction(['sessions'], 'readwrite');
-      const store = tx.objectStore('sessions');
-      const allReq = store.getAll();
-      allReq.onsuccess = () => {
-        const all = allReq.result || [];
-        const sessionRows = all.filter(s => s.id && s.id.startsWith('sess_'));
-        if (sessionRows.length === 0) return;
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction(['sessions'], 'readwrite');
+        const store = tx.objectStore('sessions');
+        const allReq = store.getAll();
+        allReq.onsuccess = () => {
+          const all = allReq.result || [];
+          const sessionRows = all.filter(s => s && s.id && s.id.startsWith('sess_'));
+          if (sessionRows.length === 0) return resolve();
 
-        const grouped = {};
-        for (const s of sessionRows) {
-          const dStr = s.date || getLocalDateString(s.startTime);
-          if (!grouped[dStr]) grouped[dStr] = [];
-          grouped[dStr].push(s);
-        }
-
-        for (const [dStr, rows] of Object.entries(grouped)) {
-          const dayId = 'day_' + dStr;
-          const existing = all.find(item => item.id === dayId) || {
-            id: dayId,
-            date: dStr,
-            startTime: rows[0].startTime,
-            endTime: rows[rows.length - 1].endTime,
-            studyTime: 0,
-            sessionTime: 0,
-            pausedTime: 0,
-            unverifiedTime: 0,
-            distractions: { lookAway: 0, away: 0, lidClosed: 0 },
-            pauses: [],
-            lastSaved: Date.now()
-          };
-
-          for (const r of rows) {
-            existing.studyTime += (r.studyTime || 0);
-            existing.sessionTime += (r.sessionTime || 0);
-            existing.pausedTime += (r.pausedTime || 0);
-            existing.unverifiedTime += (r.unverifiedTime || 0);
-            existing.distractions.lookAway += (r.distractions?.lookAway || 0);
-            existing.distractions.away += (r.distractions?.away || 0);
-            existing.distractions.lidClosed += (r.distractions?.lidClosed || 0);
-            if (r.startTime < existing.startTime) existing.startTime = r.startTime;
-            if (r.endTime && (!existing.endTime || r.endTime > existing.endTime)) existing.endTime = r.endTime;
-            store.delete(r.id);
+          const grouped = {};
+          for (const s of sessionRows) {
+            const dStr = s.date || getLocalDateString(s.startTime);
+            if (!grouped[dStr]) grouped[dStr] = [];
+            grouped[dStr].push(s);
           }
-          store.put(existing);
-        }
-      };
-    } catch (_) {}
+
+          for (const [dStr, rows] of Object.entries(grouped)) {
+            const dayId = 'day_' + dStr;
+            let existing = all.find(item => item.id === dayId) || null;
+
+            // Deduplicate duplicate snapshots among rows first
+            const uniqueSessions = [];
+            for (const r of rows) {
+              const idx = uniqueSessions.findIndex(u => isSameSessionOrSnapshot(u, r));
+              if (idx >= 0) {
+                uniqueSessions[idx] = reconcileSessionRecords(uniqueSessions[idx], r);
+              } else {
+                uniqueSessions.push(r);
+              }
+            }
+
+            for (const u of uniqueSessions) {
+              if (!existing) {
+                existing = {
+                  id: dayId,
+                  date: dStr,
+                  startTime: u.startTime || Date.now(),
+                  endTime: u.endTime || null,
+                  studyTime: u.studyTime || 0,
+                  sessionTime: u.sessionTime || 0,
+                  pausedTime: u.pausedTime || 0,
+                  unverifiedTime: u.unverifiedTime || 0,
+                  distractions: { ...(u.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
+                  pauses: Array.isArray(u.pauses) ? [...u.pauses] : [],
+                  lastSaved: u.lastSaved || Date.now(),
+                };
+              } else {
+                existing = reconcileSessionRecords(existing, u);
+              }
+            }
+
+            for (const r of rows) {
+              store.delete(r.id);
+            }
+            if (existing) {
+              store.put(existing);
+            }
+          }
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        };
+        allReq.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
   },
 
   async clearAll() {
     if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
-      const tx  = this.db.transaction(['sessions'], 'readwrite');
-      const req = tx.objectStore('sessions').clear();
-      req.onsuccess = () => {
-        localStorage.removeItem('ayush_tracker_today');
-        resolve();
-      };
-      req.onerror   = () => reject(req.error);
+    storageEpoch++; // Bump epoch to immediately invalidate any queued saves
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('ayush_tracker_today');
+    }
+    return queueStorageOperation(() => {
+      return new Promise((resolve, reject) => {
+        try {
+          const storeNames = this.db.objectStoreNames?.contains?.('locks')
+            ? ['sessions', 'locks']
+            : ['sessions'];
+          const tx = this.db.transaction(storeNames, 'readwrite');
+          tx.objectStore('sessions').clear();
+          if (storeNames.includes('locks')) {
+            tx.objectStore('locks').clear();
+          }
+          tx.oncomplete = () => {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.removeItem('ayush_tracker_today');
+            }
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
   },
 };
 
 
 // ═══════════════════════════════════════════════
-// 23. DASHBOARD — Placeholder
+// 22D. AUTHORITATIVE ANALYTICS ENGINE
+// ═══════════════════════════════════════════════
+
+/**
+ * Normalizes all session records into unique calendar day totals.
+ * Distinguishes duplicate snapshots (reconciled by max) from independent sessions (summed).
+ */
+function calculateDailyTotals(sessions = [], todayDateStr = getLocalDateString(), liveSession = null) {
+  const grouped = {};
+  for (const raw of sessions) {
+    if (!raw) continue;
+    const s = normalizeSessionRecord(raw);
+    if (!s) continue;
+    const dStr = s.date || getLocalDateString(s.startTime || Date.now());
+    if (!grouped[dStr]) grouped[dStr] = [];
+    grouped[dStr].push(s);
+  }
+
+  const dailyTotals = {};
+  for (const [dStr, rows] of Object.entries(grouped)) {
+    const unique = [];
+    for (const r of rows) {
+      const idx = unique.findIndex(u => isSameSessionOrSnapshot(u, r));
+      if (idx >= 0) {
+        unique[idx] = reconcileSessionRecords(unique[idx], r);
+      } else {
+        unique.push(r);
+      }
+    }
+
+    let studyTime = 0;
+    let sessionTime = 0;
+    let pausedTime = 0;
+    let unverifiedTime = 0;
+    const distractions = { lookAway: 0, away: 0, lidClosed: 0 };
+
+    for (const u of unique) {
+      studyTime += (u.studyTime || 0);
+      sessionTime += (u.sessionTime || 0);
+      pausedTime += (u.pausedTime || 0);
+      unverifiedTime += (u.unverifiedTime || 0);
+      distractions.lookAway += (u.distractions?.lookAway || 0);
+      distractions.away += (u.distractions?.away || 0);
+      distractions.lidClosed += (u.distractions?.lidClosed || 0);
+    }
+    sessionTime = studyTime + unverifiedTime;
+
+    dailyTotals[dStr] = {
+      id: 'day_' + dStr,
+      date: dStr,
+      studyTime,
+      sessionTime,
+      pausedTime,
+      unverifiedTime,
+      distractions,
+    };
+  }
+
+  // Reconcile with live tracking state for today
+  const liveRaw = liveSession || (
+    (state.session.studyTime > 0 || state.session.active || state.session.sessionTime > 0 ||
+      state.session.pausedTime > 0 || state.session.unverifiedTime > 0)
+      ? buildSessionRecord(state.session.endTime ?? null)
+      : null
+  );
+  const live = liveRaw ? normalizeSessionRecord(liveRaw) : null;
+
+  if (live && live.date === todayDateStr) {
+    if (!dailyTotals[todayDateStr]) {
+      dailyTotals[todayDateStr] = {
+        id: 'day_' + todayDateStr,
+        date: todayDateStr,
+        studyTime: live.studyTime || 0,
+        sessionTime: (live.studyTime || 0) + (live.unverifiedTime || 0),
+        pausedTime: live.pausedTime || 0,
+        unverifiedTime: live.unverifiedTime || 0,
+        distractions: { ...(live.distractions || { lookAway: 0, away: 0, lidClosed: 0 }) },
+      };
+    } else {
+      const existing = dailyTotals[todayDateStr];
+      const merged = reconcileSessionRecords(existing, live);
+      dailyTotals[todayDateStr] = {
+        id: 'day_' + todayDateStr,
+        date: todayDateStr,
+        studyTime: merged.studyTime,
+        sessionTime: merged.sessionTime,
+        pausedTime: merged.pausedTime,
+        unverifiedTime: merged.unverifiedTime,
+        distractions: merged.distractions,
+      };
+    }
+  }
+
+  return dailyTotals;
+}
+
+/**
+ * Calculate weekly totals and per-day values for the calendar week (Monday through Sunday).
+ */
+function calculateWeeklyTotals(dailyTotals = {}, referenceDate = new Date()) {
+  const ref = new Date(referenceDate);
+  const refDate = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const dayOfWeek = refDate.getDay() === 0 ? 6 : refDate.getDay() - 1; // 0=Mon, 6=Sun
+
+  const weekDays = [];
+  const dailyValues = [];
+  let weeklyStudyTime = 0;
+  let weeklySessionTime = 0;
+
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate() - dayOfWeek + i);
+    const dStr = getLocalDateString(d.getTime());
+    weekDays.push(dStr);
+    const rec = dailyTotals[dStr] || { studyTime: 0, sessionTime: 0 };
+    dailyValues.push(rec.studyTime || 0);
+    weeklyStudyTime += (rec.studyTime || 0);
+    weeklySessionTime += (rec.sessionTime || 0);
+  }
+
+  return {
+    weeklyStudyTime,
+    weeklySessionTime,
+    weekDays,
+    dailyValues,
+  };
+}
+
+/**
+ * Calculate monthly totals for the calendar month.
+ */
+function calculateMonthlyTotals(dailyTotals = {}, referenceDate = new Date()) {
+  const ref = new Date(referenceDate);
+  const year = ref.getFullYear();
+  const month = ref.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const monthDays = [];
+  const dailyValues = [];
+  let monthlyStudyTime = 0;
+  let monthlySessionTime = 0;
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month, day);
+    const dStr = getLocalDateString(d.getTime());
+    monthDays.push(dStr);
+    const rec = dailyTotals[dStr] || { studyTime: 0, sessionTime: 0 };
+    dailyValues.push(rec.studyTime || 0);
+    monthlyStudyTime += (rec.studyTime || 0);
+    monthlySessionTime += (rec.sessionTime || 0);
+  }
+
+  return {
+    monthlyStudyTime,
+    monthlySessionTime,
+    daysInMonth,
+    monthDays,
+    dailyValues,
+  };
+}
+
+/**
+ * Calculate daily averages across recorded sessions, the current week, or the current month.
+ */
+function calculateDailyAverages(dailyTotals = {}, type = 'all', referenceDate = new Date()) {
+  if (type === 'week') {
+    const { weeklyStudyTime } = calculateWeeklyTotals(dailyTotals, referenceDate);
+    return Math.round(weeklyStudyTime / 7);
+  }
+  if (type === 'month') {
+    const { monthlyStudyTime, daysInMonth } = calculateMonthlyTotals(dailyTotals, referenceDate);
+    return Math.round(monthlyStudyTime / daysInMonth);
+  }
+  // 'all': average across unique days with recorded study time
+  const records = Object.values(dailyTotals).filter(r => (r.studyTime || 0) > 0);
+  if (records.length === 0) return 0;
+  const total = records.reduce((acc, r) => acc + (r.studyTime || 0), 0);
+  return Math.round(total / records.length);
+}
+
+/**
+ * Calculate session utilization percentage (verified study time / total active tracking interval).
+ */
+function calculateSessionUtilization(studyMs, sessionMs) {
+  if (!sessionMs || sessionMs <= 0 || !studyMs || studyMs <= 0) return 0;
+  return Math.min(100, Math.round((studyMs / sessionMs) * 100));
+}
+
+/**
+ * Calculate historical comparisons: today vs yesterday, and this week vs last week.
+ */
+function calculateHistoricalComparisons(dailyTotals = {}, referenceDate = new Date()) {
+  const now = new Date(referenceDate);
+  const todayStr = getLocalDateString(now.getTime());
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const yesterdayStr = getLocalDateString(yesterday.getTime());
+
+  const todayStudy = dailyTotals[todayStr]?.studyTime || 0;
+  const yesterdayStudy = dailyTotals[yesterdayStr]?.studyTime || 0;
+  const todayDiff = todayStudy - yesterdayStudy;
+
+  const thisWeek = calculateWeeklyTotals(dailyTotals, now);
+  const lastWeekDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  const lastWeek = calculateWeeklyTotals(dailyTotals, lastWeekDate);
+  const weekDiff = thisWeek.weeklyStudyTime - lastWeek.weeklyStudyTime;
+
+  return {
+    todayStudy,
+    yesterdayStudy,
+    todayDiff,
+    thisWeekStudy: thisWeek.weeklyStudyTime,
+    lastWeekStudy: lastWeek.weeklyStudyTime,
+    weekDiff,
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// 23. DASHBOARD — Refresh & Rendering
 // ═══════════════════════════════════════════════
 
 async function refreshDashboard() {
   DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
   buildChart([]);
-  
+
   try {
     const sessions = await DB.getAllSessions();
     buildDashboardStats(sessions);
@@ -2575,64 +4463,37 @@ async function refreshDashboard() {
 }
 
 function buildDashboardStats(sessions) {
-  // Aggregate today's stats
   const now = new Date();
   const todayDateStr = getLocalDateString();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  
-  let todayStudy = (state.session.studyTime || 0);
-  let todaySession = (state.session.sessionTime || 0);
-  let todayDist = {
-    lookAway: state.session.distractions?.lookAway || 0,
-    away: state.session.distractions?.away || 0,
-    lidClosed: state.session.distractions?.lidClosed || 0
+  const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const dailyTotals = calculateDailyTotals(sessions, todayDateStr);
+  const { weeklyStudyTime } = calculateWeeklyTotals(dailyTotals, now);
+
+  const todayRecord = dailyTotals[todayDateStr] || {
+    studyTime: 0,
+    sessionTime: 0,
+    distractions: { lookAway: 0, away: 0, lidClosed: 0 },
   };
-  
-  // Aggregate this week's stats
-  const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0=Mon, 6=Sun
-  const startOfWeek = startOfToday - (dayOfWeek * 86400000);
-  let weeklyStudy = 0;
 
-  // Track daily totals for streak calculation
-  const dailyTotals = {};
-
-  sessions.forEach(s => {
-    const dateStr = s.date || getLocalDateString(s.startTime);
-    dailyTotals[dateStr] = Math.max(dailyTotals[dateStr] || 0, s.studyTime);
-
-    if (dateStr === todayDateStr || s.startTime >= startOfToday) {
-      todayStudy = Math.max(todayStudy, s.studyTime);
-      todaySession = Math.max(todaySession, s.sessionTime);
-      todayDist.lookAway = Math.max(todayDist.lookAway, s.distractions?.lookAway || 0);
-      todayDist.away = Math.max(todayDist.away, s.distractions?.away || 0);
-      todayDist.lidClosed = Math.max(todayDist.lidClosed, s.distractions?.lidClosed || 0);
-    }
-    
-    if (s.startTime >= startOfWeek) {
-      weeklyStudy += s.studyTime;
-    }
-  });
-
-  // Make sure today's live total is included in weekly study and streak
-  if (todayStudy > 0 && !sessions.some(s => (s.date || getLocalDateString(s.startTime)) === todayDateStr)) {
-    weeklyStudy += todayStudy;
-  }
-  dailyTotals[todayDateStr] = Math.max(dailyTotals[todayDateStr] || 0, todayStudy);
+  const todayStudy = todayRecord.studyTime || 0;
+  const todaySession = todayRecord.sessionTime || 0;
+  const todayDist = todayRecord.distractions || { lookAway: 0, away: 0, lidClosed: 0 };
 
   // Update UI Stats
   if (DOM.dashStudyTime) DOM.dashStudyTime.textContent = formatDuration(todayStudy);
-  
+
   const focusDisplay = formatFocusPercentage(todayStudy, todaySession);
   if (DOM.dashFocus) DOM.dashFocus.textContent = focusDisplay;
-  
+
   const totalDist = todayDist.lookAway + todayDist.away + todayDist.lidClosed;
   if (DOM.dashDistractions) DOM.dashDistractions.textContent = totalDist;
-  
+
   if (DOM.distLookAway) DOM.distLookAway.textContent = todayDist.lookAway;
   if (DOM.distAway) DOM.distAway.textContent = todayDist.away;
   if (DOM.distLid) DOM.distLid.textContent = todayDist.lidClosed;
-  
-  if (DOM.weeklyTotal) DOM.weeklyTotal.textContent = formatDuration(weeklyStudy);
+
+  if (DOM.weeklyTotal) DOM.weeklyTotal.textContent = formatDuration(weeklyStudyTime);
 
   // Update Summary cards on Home
   if (DOM.homeStudyTime) DOM.homeStudyTime.textContent = formatDuration(todayStudy);
@@ -2641,29 +4502,32 @@ function buildDashboardStats(sessions) {
 
   // Calculate Streak
   let streak = 0;
-  const goalMs = state.settings.dailyGoal * 3600000;
-  
-  for (let i = 0; i < 365; i++) {
-    const d = new Date(startOfToday - (i * 86400000));
-    const dStr = getLocalDateString(d.getTime());
-    const studied = dailyTotals[dStr] || 0;
-    
-    if (i === 0 && studied < goalMs) {
-      continue;
-    }
-    
-    if (studied >= goalMs) {
-      streak++;
-    } else {
-      break;
+  const goalMs = (state.settings.dailyGoal || 4) * 3600000;
+
+  if (goalMs > 0) {
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() - i);
+      const dStr = getLocalDateString(d.getTime());
+      const studied = dailyTotals[dStr] ? dailyTotals[dStr].studyTime : 0;
+
+      // If today's goal is not reached yet, it does not break streak achieved through yesterday
+      if (i === 0 && studied < goalMs) {
+        continue;
+      }
+
+      if (studied >= goalMs) {
+        streak++;
+      } else {
+        break;
+      }
     }
   }
-  
+
   if (DOM.streakBadge) DOM.streakBadge.textContent = `🔥 ${streak} Day Streak`;
   if (DOM.homeStreakBadge) DOM.homeStreakBadge.textContent = `🔥 ${streak} Day Streak`;
 
   // Daily goal progress on Home
-  const goalPct = Math.min(100, Math.round((todayStudy / goalMs) * 100));
+  const goalPct = goalMs > 0 ? Math.min(100, Math.round((todayStudy / goalMs) * 100)) : 0;
   if (DOM.goalProgressText) {
     DOM.goalProgressText.textContent = `${(todayStudy / 3600000).toFixed(1)}h of ${state.settings.dailyGoal}h (${goalPct}%)`;
   }
@@ -2683,14 +4547,16 @@ function renderRecentSessions(sessions) {
     return;
   }
   const todayStr = getLocalDateString();
-  const yesterdayStr = getLocalDateString(Date.now() - 86400000);
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayStr = getLocalDateString(yesterdayDate.getTime());
 
   DOM.homeRecentSessions.innerHTML = recent.map(s => {
     let dayLabel = s.date;
     if (s.date === todayStr) {
       dayLabel = 'Today • ' + new Date(s.startTime || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     } else if (s.date === yesterdayStr) {
-      dayLabel = 'Yesterday • ' + new Date(s.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      dayLabel = 'Yesterday • ' + new Date(s.startTime || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     } else {
       dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     }
@@ -2711,61 +4577,59 @@ function renderRecentSessions(sessions) {
 function buildChart(sessions) {
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const currentDayIdx = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0=Mon, 6=Sun
-  const startOfWeek = startOfToday - (currentDayIdx * 86400000);
+  const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const currentDayIdx = todayDate.getDay() === 0 ? 6 : todayDate.getDay() - 1; // 0=Mon, 6=Sun
+  const todayDateStr = getLocalDateString();
 
-  // Group by day of week
-  const weekData = [0, 0, 0, 0, 0, 0, 0];
-  
-  sessions.forEach(s => {
-    if (s.startTime >= startOfWeek && s.startTime < startOfWeek + (7 * 86400000)) {
-      const d = new Date(s.startTime);
-      const idx = d.getDay() === 0 ? 6 : d.getDay() - 1;
-      weekData[idx] += s.studyTime;
-    }
-  });
+  const dailyTotals = calculateDailyTotals(sessions, todayDateStr);
+  const { weekDays, dailyValues } = calculateWeeklyTotals(dailyTotals, now);
 
-  const goalMs = state.settings.dailyGoal * 3600000;
+  const goalMs = (state.settings.dailyGoal || 4) * 3600000;
 
-  DOM.chartContainer.innerHTML = '';
-  days.forEach((day, i) => {
-    const studyMs = weekData[i];
-    const studyHours = studyMs / 3600000;
-    
-    // Cap bar at 150% of goal visually
-    const percent = Math.min((studyMs / goalMs) * 100, 150);
+  if (DOM.chartContainer) {
+    DOM.chartContainer.innerHTML = '';
+    days.forEach((day, i) => {
+      const studyMs = dailyValues[i] || 0;
+      const studyHours = studyMs / 3600000;
 
-    const wrapper = document.createElement('div');
-    wrapper.className = 'chart-bar-wrapper';
+      // Cap bar at 150% of goal visually
+      const percent = goalMs > 0 ? Math.min((studyMs / goalMs) * 100, 150) : 0;
 
-    const hours = document.createElement('div');
-    hours.className = 'chart-hours';
-    hours.textContent = studyHours > 0 ? (Math.round(studyHours * 10) / 10) + 'h' : '0h';
+      const wrapper = document.createElement('div');
+      wrapper.className = 'chart-bar-wrapper';
 
-    const track = document.createElement('div');
-    track.className = 'chart-bar-track';
-    const bar = document.createElement('div');
-    bar.className = 'chart-bar';
-    bar.style.height = percent + '%';
-    if (studyMs >= goalMs) bar.style.background = 'var(--success-color)';
-    track.appendChild(bar);
+      const hours = document.createElement('div');
+      hours.className = 'chart-hours';
+      hours.textContent = studyHours > 0 ? (Math.round(studyHours * 10) / 10) + 'h' : '0h';
 
-    const label = document.createElement('div');
-    label.className = `chart-day ${i === currentDayIdx ? 'today' : ''}`;
-    label.textContent = day;
+      const track = document.createElement('div');
+      track.className = 'chart-bar-track';
+      const bar = document.createElement('div');
+      bar.className = 'chart-bar';
+      bar.style.height = percent + '%';
+      if (goalMs > 0 && studyMs >= goalMs) bar.style.background = 'var(--success-color)';
+      track.appendChild(bar);
 
-    wrapper.appendChild(hours);
-    wrapper.appendChild(track);
-    wrapper.appendChild(label);
-    DOM.chartContainer.appendChild(wrapper);
-  });
+      const label = document.createElement('div');
+      label.className = `chart-day ${i === currentDayIdx ? 'today' : ''}`;
+      label.textContent = day;
+
+      wrapper.appendChild(hours);
+      wrapper.appendChild(track);
+      wrapper.appendChild(label);
+      DOM.chartContainer.appendChild(wrapper);
+    });
+  }
 }
 
 function buildSessionList(sessions) {
+  if (!DOM.sessionList) return;
   DOM.sessionList.innerHTML = '';
 
-  if (sessions.length === 0) {
+  const dailyTotals = calculateDailyTotals(sessions, getLocalDateString());
+  const dailyList = Object.values(dailyTotals).sort((a, b) => b.date.localeCompare(a.date));
+
+  if (dailyList.length === 0 || dailyList.every(d => (d.studyTime || 0) === 0)) {
     DOM.sessionList.innerHTML =
       '<div class="empty-state"><div class="empty-state-icon text-muted"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></div><div class="empty-state-text">No recorded study days yet. Begin your first focused session on the tracker!</div></div>';
     return;
@@ -2774,20 +4638,20 @@ function buildSessionList(sessions) {
   const todayStr = getLocalDateString();
   const yesterdayStr = getLocalDateString(Date.now() - 86400000);
 
-  sessions.slice(0, 30).forEach(s => {
+  dailyList.filter(d => (d.studyTime || 0) > 0 || d.date === todayStr).slice(0, 30).forEach(s => {
     let dayLabel = s.date;
     if (s.date === todayStr) {
-      dayLabel = 'Today (' + new Date(s.startTime || Date.now()).toLocaleDateString() + ')';
+      dayLabel = 'Today (' + new Date().toLocaleDateString() + ')';
     } else if (s.date === yesterdayStr) {
-      dayLabel = 'Yesterday (' + new Date(s.startTime).toLocaleDateString() + ')';
+      dayLabel = 'Yesterday (' + new Date(Date.now() - 86400000).toLocaleDateString() + ')';
     } else {
-      dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+      dayLabel = new Date(s.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
     }
 
     const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
     const totalDist = (s.distractions?.lookAway || 0) +
-                      (s.distractions?.away      || 0) +
-                      (s.distractions?.lidClosed || 0);
+      (s.distractions?.away || 0) +
+      (s.distractions?.lidClosed || 0);
 
     const item = document.createElement('div');
     item.className = 'session-item';
@@ -2807,7 +4671,8 @@ function buildSessionList(sessions) {
         <div style="font-size:0.75rem;font-weight:500;color:var(--text-muted)">
           day's learned
         </div>
-      </div>`;
+      </div>
+    `;
     DOM.sessionList.appendChild(item);
   });
 }
@@ -2839,7 +4704,7 @@ async function togglePiP() {
       height: 86,
     });
     if (DOM.pipBtn) DOM.pipBtn.classList.add('pip-active');
-    
+
     // Copy parent document stylesheets into the PiP window
     [...document.styleSheets].forEach((styleSheet) => {
       try {
@@ -3052,7 +4917,7 @@ function updatePiP(focusScore) {
   const alertTextEl = state.pipWindow.document.getElementById('pip-alert-text');
   const alertIconEl = state.pipWindow.document.getElementById('pip-alert-icon');
   const focusTagEl = state.pipWindow.document.getElementById('pip-focus-tag');
-  
+
   const cutoff = state.settings.focusThreshold ?? 50;
   const score = typeof focusScore === 'number'
     ? focusScore
@@ -3140,10 +5005,10 @@ async function handleExportCSV() {
       showToast('warning', 'No Data', 'There is no study data to export.');
       return;
     }
-    
+
     let csv = 'Date,Day Learned Time (ms),Day Learned Duration,Active Time (ms),Paused Time (ms),Focus %,Look Aways,Aways,Lid Closed,Goal Met\n';
     const goalMs = state.settings.dailyGoal * 3600000;
-    
+
     records.forEach(r => {
       const focusText = formatFocusPercentage(r.studyTime, r.sessionTime);
       const goalMet = r.studyTime >= goalMs ? 'Yes' : 'No';
@@ -3158,7 +5023,7 @@ async function handleExportCSV() {
       csv += `${r.distractions?.lidClosed || 0},`;
       csv += `"${goalMet}"\n`;
     });
-    
+
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -3168,7 +5033,7 @@ async function handleExportCSV() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     showToast('success', 'Exported!', 'Your daily study records have been downloaded.');
   } catch (e) {
     console.error('Export failed:', e);
@@ -3179,30 +5044,93 @@ async function handleExportCSV() {
 async function handleDeleteAll() {
   if (confirm('Delete all study data? This cannot be undone.')) {
     try {
+      // 1. Clear any pending autosave timers to prevent resurrection
+      if (state.autoSaveInterval) {
+        clearInterval(state.autoSaveInterval);
+        state.autoSaveInterval = null;
+      }
+
+      // 2. Stop detection loop, camera, and worker
+      stopDetectionLoop();
+      stopCamera();
+      stopWorker();
+      await releaseTabLock();
+
+      // 3. Close open pauses if any
+      endPauseEvent(Date.now(), getMonotonicNow());
+
+      // 4. Update session state to idle and not active
+      state.session.active = false;
+      state.isPaused = false;
+      setStatus('idle');
+
+      // 5. Clear IndexedDB and localStorage
       await DB.clearAll();
-      localStorage.removeItem('ayush_tracker_today');
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('ayush_tracker_today');
+        localStorage.removeItem(ACTIVE_TAB_LOCK_KEY);
+      }
+
+      // 6. Reset in-memory session object
       const todayStr = getLocalDateString();
       state.session = {
         active: false,
         id: 'day_' + todayStr,
         dateStr: todayStr,
         startTime: null,
+        endTime: null,
         studyStartedAt: null,
+        studyCursorMono: null,
         sessionStartedAt: null,
+        unverifiedStartedAt: null,
+        unverifiedCursorMono: null,
         accStudyMs: 0,
         accSessionMs: 0,
+        accUnverifiedMs: 0,
+        studyRunMs: 0,
+        unverifiedRunMs: 0,
         studyTime: 0,
         sessionTime: 0,
+        pausedTime: 0,
         unverifiedTime: 0,
         distractions: { lookAway: 0, away: 0, lidClosed: 0 },
         pauses: [],
+        lastSaved: Date.now(),
+        schemaVersion: 2,
       };
-      DOM.timerDisplay.textContent = '00:00:00';
+      state.camera.lastAttemptTime = 0;
+      state.camera.lastFrameTime = 0;
+      state.camera.lastFaceTime = 0;
+      state.camera.lastAttemptMonotonic = null;
+      state.camera.lastFrameMonotonic = null;
+      state.camera.lastFaceMonotonic = null;
+      state.camera.lastDetectionTime = 0;
+      state.camera.frameSeq = 0;
+      state.camera._lastTickFrameSeq = 0;
+      state.camera._msSinceLastFrame = 0;
+      state.camera._suspensionDetected = false;
+      state._lifecycleSuspended = false;
+      state._frozenAtMonotonic = null;
+      state.lastDetectionTime = 0;
+      state.lastTickTimestamp = 0;
+      state.lastTickMonotonic = null;
+      state.lastTick = 0;
+
+      // 7. Reset UI displays and buttons
+      if (DOM.timerDisplay) DOM.timerDisplay.textContent = '00:00:00';
       if (DOM.statSessionTime) DOM.statSessionTime.textContent = '00:00:00';
       if (DOM.statPausedTime) DOM.statPausedTime.textContent = '00:00:00';
+      if (DOM.startBtn) {
+        DOM.startBtn.classList.remove('hidden');
+        DOM.startBtn.disabled = false;
+      }
+      if (DOM.endBtn) {
+        DOM.endBtn.classList.add('hidden');
+      }
       updateStartButtonLabel();
+      updateSessionStatsDisplay();
       showToast('warning', 'Data cleared', 'All study data has been deleted.');
-      refreshDashboard();
+      await refreshDashboard();
     } catch (e) {
       console.error('Clear failed:', e);
       showToast('error', 'Clear failed', 'Could not delete data.');
@@ -3245,7 +5173,7 @@ function attachEventListeners() {
 
   // Timer controls
   DOM.startBtn.addEventListener('click', handleStart);
-  DOM.endBtn.addEventListener('click', handleEnd);
+  DOM.endBtn.addEventListener('click', () => handleEnd(Date.now(), getMonotonicNow()));
 
   // Dashboard actions
   DOM.exportCsvBtn.addEventListener('click', handleExportCSV);
@@ -3290,8 +5218,11 @@ function handleUserActivity() {
 function checkDayRollover() {
   const currentDayStr = getLocalDateString();
   if (state.session.dateStr && state.session.dateStr !== currentDayStr) {
+    const now = Date.now();
+    const gap = now - (state.lastTickTimestamp || now);
+    const isSleep = gap > CONFIG.lidGapMs;
     if (state.session.active) {
-      handleMidnightRollover(Date.now(), currentDayStr);
+      handleMidnightRollover(now, currentDayStr, isSleep ? state.lastTickTimestamp : null);
     } else {
       loadTodayState();
       refreshDashboard();
@@ -3304,42 +5235,57 @@ function checkDayRollover() {
 // 28. INITIALISE THE APP
 // ═══════════════════════════════════════════════
 
+let initPromise = null;
+
 function init() {
+  if (initPromise) return initPromise;
+
   // Purge any old service worker caches immediately
-  if ('caches' in window) {
+  if (typeof caches !== 'undefined') {
     caches.keys().then((keys) => {
       keys.forEach((k) => {
-        if (k !== 'ayush-tracker-v2') caches.delete(k);
+        if (k !== 'ayush-tracker-v11') caches.delete(k);
       });
-    });
+    }).catch(() => { });
   }
 
   // Load today's accumulated progress immediately from localStorage
   loadTodayState();
 
-  DB.init()
+  initPromise = DB.init()
     .then(() => DB.consolidateToDaily())
     .then(() => recoverUnfinishedSessions())
     .then(async () => {
       // Reconcile with IndexedDB today's record if present
       const todayStr = getLocalDateString();
       const dbDay = await DB.getDailyRecord(todayStr);
-      if (dbDay && (dbDay.studyTime || 0) > (state.session.studyTime || 0)) {
-        state.session.id = dbDay.id;
-        state.session.dateStr = dbDay.date;
-        state.session.startTime = dbDay.startTime || state.session.startTime;
-        state.session.accStudyMs = dbDay.studyTime;
-        state.session.studyTime = dbDay.studyTime;
-        state.session.accSessionMs = dbDay.sessionTime;
-        state.session.sessionTime = dbDay.sessionTime;
-        state.session.distractions = dbDay.distractions || state.session.distractions;
-        DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
-        if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime);
-        const pausedMs = Math.max(0, state.session.sessionTime - state.session.studyTime - (state.session.unverifiedTime || 0));
-        if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(pausedMs);
-        updateStartButtonLabel();
-        updateSessionStatsDisplay();
-        saveTodayToLocalStorage();
+      if (dbDay) {
+        const localRec = buildSessionRecord();
+        const merged = reconcileSessionRecords(localRec, dbDay);
+        if (merged) {
+          state.session.id = merged.id;
+          state.session.dateStr = merged.date;
+          state.session.startTime = merged.startTime;
+          state.session.endTime = merged.endTime;
+          state.session.accStudyMs = merged.studyTime;
+          state.session.studyTime = merged.studyTime;
+          state.session.accSessionMs = merged.sessionTime;
+          state.session.sessionTime = merged.sessionTime;
+          state.session.accUnverifiedMs = merged.unverifiedTime;
+          state.session.unverifiedTime = merged.unverifiedTime;
+          state.session.pausedTime = merged.pausedTime;
+          state.session.distractions = merged.distractions;
+          state.session.pauses = merged.pauses;
+          state.session.lastSaved = merged.lastSaved;
+          state.session.schemaVersion = 2;
+          if (DOM.timerDisplay) DOM.timerDisplay.textContent = formatTime(state.session.studyTime);
+          if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(state.session.sessionTime || 0);
+          if (DOM.statPausedTime) DOM.statPausedTime.textContent = formatTime(state.session.pausedTime || 0);
+          updateStartButtonLabel();
+          updateSessionStatsDisplay();
+          saveTodayToLocalStorage();
+          await DB.saveSession(merged);
+        }
       }
     })
     .then(() => refreshDashboard())
@@ -3353,34 +5299,129 @@ function init() {
   initPiP();
   attachEventListeners();
   registerServiceWorker();
-  DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
+  if (DOM.dailyGoalDisplay) DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
 
-  // Save when the tab is hidden or the window is about to close.
-  document.addEventListener('visibilitychange', () => {
-    checkDayRollover();
-    if (document.hidden) {
-      saveTodayToLocalStorage();
-      autoSaveSession();
-    }
-  });
-  window.addEventListener('focus', checkDayRollover);
-  setInterval(checkDayRollover, 30000);
+  // Save only when actively tracking so idle tabs never clobber another tab's progress
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      checkDayRollover();
+      if (document.hidden && state.session.active) {
+        saveTodayToLocalStorage();
+        autoSaveSession();
+      }
+    });
+    // Page Lifecycle API signals for browser tab freeze/suspension
+    document.addEventListener('freeze', () => {
+      if (state.session.active) {
+        const freezeWall = Date.now();
+        const freezeMono = getMonotonicNow();
+        state._frozenAtMonotonic = freezeMono;
+        if (state.status === 'studying') {
+          freezeStudyTime(freezeWall, freezeMono);
+        }
+        saveTodayToLocalStorage(freezeWall);
+        autoSaveSession();
+      }
+    });
+    document.addEventListener('resume', () => {
+      const frozenAt = state._frozenAtMonotonic;
+      state._frozenAtMonotonic = null;
+      const monoNow = getMonotonicNow();
+      if (typeof frozenAt === 'number' && (monoNow - frozenAt) > CONFIG.lidGapMs) {
+        state._lifecycleSuspended = true;
+      }
+    });
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', checkDayRollover);
+    setInterval(checkDayRollover, 30000);
 
-  window.addEventListener('beforeunload', () => {
-    saveTodayToLocalStorage();
-    autoSaveSession();
-  });
+    window.addEventListener('beforeunload', () => {
+      if (state.session.active) {
+        saveTodayToLocalStorage();
+        autoSaveSession();
+      }
+      releaseTabLock();
+    });
 
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('tab') === 'history') switchTab('history');
-  if (urlParams.has('settings')) openSettings();
-  if (urlParams.has('calibrate') && DOM.calibrationOverlay) DOM.calibrationOverlay.classList.add('active');
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('tab') === 'history') switchTab('history');
+      if (urlParams.has('settings')) openSettings();
+      if (urlParams.has('calibrate') && DOM.calibrationOverlay) DOM.calibrationOverlay.classList.add('active');
+    } catch (_) { }
+  }
 
   loadMediaPipeModule();
+  return initPromise;
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
+if (typeof window !== 'undefined' && typeof process === 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    CONFIG,
+    state,
+    DOM,
+    formatTime,
+    formatDuration,
+    formatFocusPercentage,
+    getLocalDateString,
+    calculateFocusScore,
+    calculateYaw,
+    calculatePitch,
+    isUserFacingScreen,
+    calculateGoalProgress,
+    calculateBackdatedStudyTime,
+    freezeStudyTime,
+    resumeStudyTime,
+    startPauseEvent,
+    endPauseEvent,
+    calculateTotalPausedTime,
+    normalizeSessionRecord,
+    isSameSessionOrSnapshot,
+    reconcileSessionRecords,
+    buildSessionRecord,
+    runDetection,
+    startDetectionLoop,
+    stopDetectionLoop,
+    evaluateCameraHealth,
+    checkTabConflict,
+    isLockConflicting,
+    acquireTabLock,
+    refreshTabLock,
+    releaseTabLock,
+    getMonotonicNow,
+    TAB_ID,
+    handleTick,
+    handleMidnightRollover,
+    checkDayRollover,
+    processDetectionResult,
+    handleCameraTrackEnded,
+    handleStart,
+    handleEnd,
+    handleDeleteAll,
+    calculateDailyTotals,
+    calculateWeeklyTotals,
+    calculateMonthlyTotals,
+    calculateDailyAverages,
+    calculateSessionUtilization,
+    calculateHistoricalComparisons,
+    buildDashboardStats,
+    buildChart,
+    buildSessionList,
+    autoSaveSession,
+    recoverUnfinishedSessions,
+    loadTodayState,
+    saveTodayToLocalStorage,
+    updatePipeline,
+    DB,
+    init,
+  };
 }
