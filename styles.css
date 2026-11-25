@@ -404,8 +404,14 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 1.25rem;
+  gap: 1.5rem;
   margin-top: 1.5rem;
+}
+
+.home-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
 /* Unified Brushed Aluminum Chassis */
@@ -586,21 +592,55 @@ body {
 
 .timer-display {
   font-size: clamp(3.1rem, 5.4vw, 5.1rem);
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: 0.08em;
   line-height: 1;
-  color: var(--ink-on-carbon);
+  color: #EAE9E3;
+  background: linear-gradient(
+    180deg,
+    #FFFFFF 0%,
+    #ECEBE5 35%,
+    #B4B3AB 52%,
+    #DFDED6 74%,
+    #9C9B93 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 -1px 0 rgba(255, 255, 255, 0.16));
   text-align: center;
   white-space: nowrap;
-  transition: color var(--t-norm);
+  transition: filter var(--t-norm), opacity var(--t-norm);
 }
 
 .timer-display.active {
-  color: #FFFFFF;
+  color: #F2F1EC;
+  background: linear-gradient(
+    180deg,
+    #FFFFFF 0%,
+    #F3F2EC 38%,
+    #C4C3BB 54%,
+    #EAE9E2 76%,
+    #AEADA5 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .timer-display.paused {
-  color: var(--signal-orange-hud);
+  color: #F2784B;
+  background: linear-gradient(
+    180deg,
+    #FFC5AE 0%,
+    #F27C50 38%,
+    #B83D12 54%,
+    #EB6A3B 76%,
+    #942F0D 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .timer-caption {
@@ -1525,10 +1565,6 @@ body {
   background: var(--optical-sage-hud);
 }
 
-.aux-pip-btn.active {
-  border-color: #8A2A09;
-}
-
 .aux-icon {
   width: 15px;
   height: 15px;
@@ -1717,16 +1753,12 @@ body {
   border-color: rgba(255, 255, 255, 0.25);
 }
 
-/* ---------- 9. Secondary Audit Drawer (Focus-Mode Collapsible) ---------- */
+/* ---------- 9. Secondary Audit Drawer ---------- */
 .audit-drawer {
   border-radius: var(--radius-console);
   background: var(--aluminum-base);
   border: 1px solid var(--aluminum-border);
-  transition: opacity var(--t-norm);
-}
-
-body[data-session-active="true"] .audit-drawer {
-  opacity: 0.65;
+  box-shadow: 0 2px 6px rgba(22, 22, 20, 0.05);
 }
 
 .audit-drawer-summary {

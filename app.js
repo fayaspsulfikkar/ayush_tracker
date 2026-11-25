@@ -1066,9 +1066,6 @@ function setStatus(status, text) {
   if (typeof document !== 'undefined' && document.body && typeof document.body.setAttribute === 'function') {
     document.body.setAttribute('data-session-active', state.session?.active ? 'true' : 'false');
   }
-  if (state.session?.active && DOM.secondaryAuditDrawer) {
-    DOM.secondaryAuditDrawer.open = false;
-  }
 
   const defaultTexts = {
     'idle': (state.session && (state.session.studyTime || state.session.accStudyMs || 0) > 0)
@@ -2726,7 +2723,8 @@ function handleTick(data) {
   // ── Detect midnight rollover (uses wall-clock calendar date) ──
   const currentDayStr = getLocalDateString(now);
   if (state.session.active && state.session.dateStr && state.session.dateStr !== currentDayStr) {
-    handleMidnightRollover(now, currentDayStr, isSleepGap ? lastTick : null, { isStalled, latestFrameWall });
+    const rolloverIsSleep = isSleepGap || (lastTick && (now - lastTick) > CONFIG.lidGapMs);
+    handleMidnightRollover(now, currentDayStr, rolloverIsSleep ? lastTick : null, { isStalled, latestFrameWall });
     state.lastTickTimestamp = now;
     if (hasMonotonic) state.lastTickMonotonic = monotonicNow;
     return;
@@ -2976,10 +2974,11 @@ function handleMidnightRollover(now, newDateStr, sleepAnchor = null, stallContex
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   const boundaryTime = d.getTime();
-  const isSleep = Boolean(sleepAnchor);
-  const yesterdayLimit = sleepAnchor ? Math.min(boundaryTime, sleepAnchor) : boundaryTime;
-
   const prevTickTime = state.lastTickTimestamp || boundaryTime;
+  // Reject multi-hour post-midnight rollover credits when no sleep anchor was supplied
+  const staleCrossing = !sleepAnchor && ((now - boundaryTime) > 3600000 || (prevTickTime && (now - prevTickTime) > 3600000));
+  const isSleep = Boolean(sleepAnchor) || staleCrossing;
+  const yesterdayLimit = sleepAnchor ? Math.min(boundaryTime, sleepAnchor) : boundaryTime;
   const stallDetected = Boolean(
     (stallContext && stallContext.isStalled) ||
     state.session.unverifiedStartedAt !== null ||
@@ -4689,12 +4688,13 @@ function buildDashboardStats(sessions) {
 
   const todayStudy = todayRecord.studyTime || 0;
   const todaySession = todayRecord.sessionTime || 0;
+  const todayPaused = todayRecord.pausedTime || 0;
   const todayDist = todayRecord.distractions || { lookAway: 0, away: 0, lidClosed: 0 };
 
   // Update UI Stats
   if (DOM.dashStudyTime) DOM.dashStudyTime.textContent = formatDuration(todayStudy);
 
-  const focusDisplay = formatFocusPercentage(todayStudy, todaySession);
+  const focusDisplay = formatFocusPercentage(todayStudy, todaySession + todayPaused);
   if (DOM.dashFocus) DOM.dashFocus.textContent = focusDisplay;
 
   const totalDist = todayDist.lookAway + todayDist.away + todayDist.lidClosed;
@@ -4808,7 +4808,7 @@ function renderRecentSessions(sessions) {
     } else {
       dayLabel = new Date(s.startTime || (s.date + 'T12:00:00')).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     }
-    const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
+    const focusDisplay = formatFocusPercentage(s.studyTime, (s.sessionTime || 0) + (s.pausedTime || 0));
     const totalDist = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
     return `
       <div class="recent-session-item">
@@ -4896,7 +4896,7 @@ function buildSessionList(sessions) {
       dayLabel = new Date(s.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
     }
 
-    const focusDisplay = formatFocusPercentage(s.studyTime, s.sessionTime);
+    const focusDisplay = formatFocusPercentage(s.studyTime, (s.sessionTime || 0) + (s.pausedTime || 0));
     const totalDist = (s.distractions?.lookAway || 0) +
       (s.distractions?.away || 0) +
       (s.distractions?.lidClosed || 0);
@@ -4949,8 +4949,8 @@ async function togglePiP() {
 
   try {
     state.pipWindow = await documentPictureInPicture.requestWindow({
-      width: 210,
-      height: 86,
+      width: 248,
+      height: 112,
     });
     if (DOM.pipBtn) DOM.pipBtn.classList.add('pip-active');
     if (DOM.hwPipBtn) DOM.hwPipBtn.classList.add('active');
@@ -4972,7 +4972,7 @@ async function togglePiP() {
       }
     });
 
-    // Injected dedicated inline styles for fully responsive PiP window
+    // Chrono-Optic machined aluminum & carbon PiP mini-instrument styles
     state.pipWindow.document.documentElement.classList.add('pip-html');
     state.pipWindow.document.body.classList.add('pip-body');
 
@@ -4983,146 +4983,173 @@ async function togglePiP() {
         width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
         container-type: size; container-name: piproot;
         font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        --pip-bg: #161614;
-        --pip-surface: #1E1F1C;
-        --pip-text: #F2F1EC;
-        --pip-muted: #A6A69E;
-        --pip-border: #2B2C28;
+        --pip-chassis-top: #F2F1EC;
+        --pip-chassis-bot: #DAD8D0;
+        --pip-chassis-border: #C5C3BA;
+        --pip-chassis-hl: rgba(255, 255, 255, 0.78);
+        --pip-ink-slate: #52524C;
+        --pip-carbon: #161614;
+        --pip-carbon-border: #2B2C28;
         --pip-present: #57B889;
         --pip-warn: #E86233;
-        --pip-away: #E86233;
-        background: var(--pip-bg); color: var(--pip-text); user-select: none;
+        --pip-muted: #A6A69E;
+        background: var(--pip-chassis-bot);
+        user-select: none;
       }
-      html[data-theme="light"], html[data-theme="light"] body.pip-body {
-        --pip-bg: #E1E1DB;
-        --pip-surface: #161614;
-        --pip-text: #F2F1EC;
-        --pip-muted: #A6A69E;
-        --pip-border: #BFBDB5;
-        --pip-present: #57B889;
-        --pip-warn: #E86233;
-        --pip-away: #E86233;
+      html[data-theme="dark"], html[data-theme="dark"] body.pip-body {
+        --pip-chassis-top: #262724;
+        --pip-chassis-bot: #191A17;
+        --pip-chassis-border: #363833;
+        --pip-chassis-hl: rgba(255, 255, 255, 0.08);
+        --pip-ink-slate: #A8A89F;
+        --pip-carbon: #0E0F0D;
+        --pip-carbon-border: #282A25;
       }
       .pip-root {
-        width: 100%; height: 100vh;
-        display: flex; flex-direction: column; justify-content: space-between; align-items: center;
-        padding: clamp(4px, 4cqh, 16px) clamp(6px, 3.5cqw, 20px);
-        gap: clamp(2px, 2.5cqh, 10px);
         position: relative;
-        transition: background 0.25s ease, border-color 0.25s ease;
-        background: var(--pip-bg);
-        border: clamp(1px, 0.6cqmin, 3px) solid var(--pip-border); box-sizing: border-box; overflow: hidden;
+        width: 100%; height: 100vh;
+        display: flex; flex-direction: column; justify-content: space-between;
+        padding: clamp(6px, 6cqh, 12px) clamp(8px, 4cqw, 14px);
+        gap: clamp(4px, 4cqh, 8px);
+        background: linear-gradient(180deg, var(--pip-chassis-top) 0%, var(--pip-chassis-bot) 100%);
+        border: 1px solid var(--pip-chassis-border);
+        box-shadow: inset 0 1px 0 var(--pip-chassis-hl);
+        overflow: hidden;
       }
-      .pip-root[data-status="studying"] {
-        background: var(--pip-surface);
-        border-color: var(--pip-present);
+      .pip-screw {
+        position: absolute; width: 5px; height: 5px; border-radius: 50%;
+        background: radial-gradient(circle at 35% 35%, #F4F3EE 0%, #9E9C94 80%);
+        border: 0.5px solid rgba(22, 22, 20, 0.3); pointer-events: none; z-index: 3;
       }
-      .pip-root[data-status="studying"] .pip-timer { color: var(--pip-present); }
-      .pip-root[data-status="studying"] .pip-badge {
-        background: rgba(37, 133, 100, 0.14); color: var(--pip-present); border: 1px solid var(--pip-present);
+      html[data-theme="dark"] .pip-screw {
+        background: radial-gradient(circle at 35% 35%, #555750 0%, #242622 80%);
+        border-color: rgba(0, 0, 0, 0.65);
       }
-      .pip-root[data-status="studying"] .pip-badge-dot { background: var(--pip-present); }
-      .pip-root[data-status="looking-away"] {
-        background: var(--pip-surface);
-        border-color: var(--pip-warn);
-      }
-      .pip-root[data-status="looking-away"] .pip-timer { color: var(--pip-warn); }
-      .pip-root[data-status="looking-away"] .pip-badge {
-        background: var(--pip-warn); color: #FFFFFF; font-weight: 700; border: 1px solid var(--pip-warn);
-      }
-      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #FFFFFF; }
-      .pip-root[data-status="looking-away"] .pip-alert-banner {
-        display: flex !important; background: rgba(180, 83, 9, 0.16); color: var(--pip-warn); border-color: var(--pip-warn);
-      }
-      .pip-root[data-status="away"], .pip-root[data-status="lid-closed"] {
-        background: var(--pip-surface);
-        border-color: var(--pip-away);
-      }
-      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: var(--pip-away); }
-      .pip-root[data-status="away"] .pip-badge, .pip-root[data-status="lid-closed"] .pip-badge {
-        background: var(--pip-away); color: #FFFFFF; font-weight: 700; border: 1px solid var(--pip-away);
-      }
-      html[data-theme="dark"] .pip-root[data-status="away"] .pip-badge,
-      html[data-theme="dark"] .pip-root[data-status="lid-closed"] .pip-badge {
-        color: #1D1B18;
-      }
-      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot { background: currentColor; }
-      .pip-root[data-status="away"] .pip-alert-banner, .pip-root[data-status="lid-closed"] .pip-alert-banner {
-        display: flex !important; background: rgba(201, 69, 72, 0.14); color: var(--pip-away); border-color: var(--pip-away);
-      }
-      .pip-root[data-status="idle"], .pip-root[data-status="calibrating"] {
-        background: var(--pip-bg); border-color: var(--pip-border);
-      }
-      .pip-root[data-status="idle"] .pip-timer { color: var(--pip-muted); }
-      .pip-root[data-status="idle"] .pip-badge {
-        background: var(--pip-surface); color: var(--pip-muted); border: 1px solid var(--pip-border);
-      }
+      .pip-screw.tl { top: 4px; left: 4px; }
+      .pip-screw.tr { top: 4px; right: 4px; }
+      .pip-screw.bl { bottom: 4px; left: 4px; }
+      .pip-screw.br { bottom: 4px; right: 4px; }
       .pip-header {
-        width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 6px;
+        width: 100%; display: flex; justify-content: space-between; align-items: center;
+        flex-shrink: 0; gap: 6px; padding: 0 4px;
       }
       .pip-badge {
-        display: inline-flex; align-items: center; gap: clamp(3px, 1.2cqmin, 6px);
-        padding: clamp(2px, 1.8cqh, 6px) clamp(6px, 2.5cqw, 12px); border-radius: 9999px;
-        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); font-weight: 600; text-transform: uppercase;
-        letter-spacing: 0.04em; white-space: nowrap; transition: all 0.2s ease;
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 2px 8px; border-radius: 5px;
+        background: var(--pip-carbon); border: 1px solid var(--pip-carbon-border);
+        color: var(--pip-muted);
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(0.55rem, min(11cqh, 3.8cqw), 0.78rem);
+        font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+        white-space: nowrap;
       }
       .pip-badge-dot {
-        width: clamp(4px, 2.5cqmin, 8px); height: clamp(4px, 2.5cqmin, 8px); border-radius: 50%; flex-shrink: 0;
+        width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+        background: var(--pip-muted);
       }
+      .pip-root[data-status="studying"] .pip-badge { color: var(--pip-present); }
+      .pip-root[data-status="studying"] .pip-badge-dot { background: var(--pip-present); }
+      .pip-root[data-status="looking-away"] .pip-badge,
+      .pip-root[data-status="away"] .pip-badge,
+      .pip-root[data-status="lid-closed"] .pip-badge {
+        background: #B83C12; border-color: #8F2B0A; color: #FFFFFF;
+      }
+      .pip-root[data-status="looking-away"] .pip-badge-dot,
+      .pip-root[data-status="away"] .pip-badge-dot,
+      .pip-root[data-status="lid-closed"] .pip-badge-dot { background: #FFFFFF; }
       .pip-focus-tag {
-        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); color: var(--pip-muted); font-weight: 600; white-space: nowrap;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(0.55rem, min(11cqh, 3.8cqw), 0.78rem);
+        color: var(--pip-ink-slate); font-weight: 700; letter-spacing: 0.04em; white-space: nowrap;
       }
+      .pip-console {
+        position: relative; flex: 1; min-height: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        border-radius: 7px;
+        background: linear-gradient(180deg, #1B1C19 0%, var(--pip-carbon) 100%);
+        border: 1px solid var(--pip-carbon-border);
+        box-shadow: inset 0 2px 7px rgba(0, 0, 0, 0.72), 0 1px 0 var(--pip-chassis-hl);
+        padding: clamp(4px, 4cqh, 10px) clamp(8px, 4cqw, 16px);
+        overflow: hidden;
+      }
+      .pip-root[data-status="studying"] .pip-console {
+        border-color: rgba(87, 184, 137, 0.45);
+      }
+      .pip-root[data-status="looking-away"] .pip-console,
+      .pip-root[data-status="away"] .pip-console,
+      .pip-root[data-status="lid-closed"] .pip-console {
+        border-color: rgba(232, 98, 51, 0.65);
+      }
+      .pip-bracket {
+        position: absolute; width: 7px; height: 7px;
+        border-color: rgba(255, 255, 255, 0.22); border-style: solid; border-width: 0;
+        pointer-events: none;
+      }
+      .pip-bracket.tl { top: 4px; left: 5px; border-top-width: 1.5px; border-left-width: 1.5px; }
+      .pip-bracket.tr { top: 4px; right: 5px; border-top-width: 1.5px; border-right-width: 1.5px; }
+      .pip-bracket.bl { bottom: 4px; left: 5px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+      .pip-bracket.br { bottom: 4px; right: 5px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
       .pip-timer {
         font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: clamp(1.2rem, min(48cqh, 17.2cqw), 5.5rem); font-weight: 700; letter-spacing: -0.03em;
-        line-height: 1; margin: 0; flex: 1; display: flex; align-items: center; justify-content: center;
-        text-align: center; white-space: nowrap; transition: color 0.2s ease;
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: 'tnum' 1, 'zero' 1;
+        font-size: clamp(1.15rem, min(42cqh, 15.5cqw), 4.6rem);
+        font-weight: 500; letter-spacing: 0.06em; line-height: 1;
+        color: #F2F1EC;
+        background: linear-gradient(180deg, #FFFFFF 0%, #ECEBE5 36%, #B4B3AB 53%, #DFDED6 75%, #9E9D95 100%);
+        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.85)) drop-shadow(0 -1px 0 rgba(255, 255, 255, 0.14));
+        text-align: center; white-space: nowrap;
+      }
+      .pip-root[data-status="looking-away"] .pip-timer,
+      .pip-root[data-status="away"] .pip-timer,
+      .pip-root[data-status="lid-closed"] .pip-timer {
+        color: #F2784B;
+        background: linear-gradient(180deg, #FFC5AE 0%, #F27C50 38%, #B83D12 54%, #EB6A3B 76%, #942F0D 100%);
+        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
       }
       .pip-alert-banner {
-        width: 100%; display: none; align-items: center; justify-content: center; gap: clamp(3px, 1.5cqmin, 6px);
-        padding: clamp(2px, 1.8cqh, 6px) clamp(6px, 2cqw, 10px); border-radius: clamp(3px, 1.5cqmin, 6px);
-        font-size: clamp(0.55rem, min(12cqh, 3.8cqw), 0.85rem); font-weight: 700;
-        letter-spacing: 0.03em; border: 1px solid transparent; white-space: nowrap; overflow: hidden;
-        text-overflow: ellipsis; flex-shrink: 0;
+        width: 100%; display: none; align-items: center; justify-content: center; gap: 5px;
+        padding: 3px 8px; border-radius: 5px;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(0.55rem, min(10cqh, 3.4cqw), 0.76rem); font-weight: 700;
+        letter-spacing: 0.04em; background: rgba(232, 98, 51, 0.14);
+        color: var(--pip-warn); border: 1px solid rgba(232, 98, 51, 0.45);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0;
       }
-      @container piproot (max-height: 65px) and (min-width: 170px) {
-        .pip-root {
-          flex-direction: row; justify-content: space-between; align-items: center; padding: 3px 8px; gap: 8px;
-        }
-        .pip-header {
-          width: auto; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;
-        }
-        .pip-timer {
-          flex: 1; justify-content: flex-end; font-size: clamp(1.1rem, min(65cqh, 16cqw), 2.4rem);
-        }
-        .pip-alert-banner {
-          position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10;
-        }
+      .pip-root[data-status="looking-away"] .pip-alert-banner,
+      .pip-root[data-status="away"] .pip-alert-banner,
+      .pip-root[data-status="lid-closed"] .pip-alert-banner {
+        display: flex !important;
       }
-      @container piproot (max-aspect-ratio: 11/10) {
-        .pip-root {
-          padding: clamp(8px, 6cqh, 24px) clamp(8px, 6cqw, 24px); gap: clamp(4px, 4cqh, 16px);
-        }
-        .pip-timer { font-size: clamp(1.4rem, min(36cqh, 19cqw), 6rem); }
+      @container piproot (max-height: 74px) and (min-width: 170px) {
+        .pip-root { flex-direction: row; align-items: center; padding: 5px 8px; gap: 8px; }
+        .pip-screw { display: none; }
+        .pip-header { width: auto; flex-direction: column; align-items: flex-start; gap: 3px; padding: 0; }
+        .pip-console { height: 100%; padding: 4px 10px; }
+        .pip-timer { font-size: clamp(1rem, min(52cqh, 14cqw), 2.1rem); }
+        .pip-alert-banner { position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10; background: #161614; }
       }
       .pip-root[data-layout="compact-row"] {
-        flex-direction: row; justify-content: space-between; align-items: center; padding: 3px 8px; gap: 8px;
+        flex-direction: row; align-items: center; padding: 5px 8px; gap: 8px;
       }
+      .pip-root[data-layout="compact-row"] .pip-screw { display: none; }
       .pip-root[data-layout="compact-row"] .pip-header {
-        width: auto; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;
+        width: auto; flex-direction: column; align-items: flex-start; gap: 3px; padding: 0;
       }
-      .pip-root[data-layout="compact-row"] .pip-timer {
-        flex: 1; justify-content: flex-end;
-      }
+      .pip-root[data-layout="compact-row"] .pip-console { height: 100%; padding: 4px 10px; }
       .pip-root[data-layout="compact-row"] .pip-alert-banner {
-        position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10;
+        position: absolute; inset: 0; height: 100%; border-radius: 0; z-index: 10; background: #161614;
       }
     `;
     state.pipWindow.document.head.appendChild(customStyle);
 
     state.pipWindow.document.body.innerHTML = `
       <div id="pip-container" class="pip-root" data-status="${escapeHtml(state.status)}">
+        <span class="pip-screw tl" aria-hidden="true"></span>
+        <span class="pip-screw tr" aria-hidden="true"></span>
+        <span class="pip-screw bl" aria-hidden="true"></span>
+        <span class="pip-screw br" aria-hidden="true"></span>
         <div class="pip-header">
           <div id="pip-status-chip" class="pip-badge" data-status="${escapeHtml(state.status)}">
             <span class="pip-badge-dot"></span>
@@ -5131,8 +5158,14 @@ async function togglePiP() {
           <div id="pip-focus-tag" class="pip-focus-tag">Focus: —</div>
         </div>
 
-        <div id="pip-timer" class="pip-timer" data-status="${escapeHtml(state.status)}">
-          ${escapeHtml(DOM.timerDisplay.textContent)}
+        <div class="pip-console">
+          <span class="pip-bracket tl" aria-hidden="true"></span>
+          <span class="pip-bracket tr" aria-hidden="true"></span>
+          <span class="pip-bracket bl" aria-hidden="true"></span>
+          <span class="pip-bracket br" aria-hidden="true"></span>
+          <div id="pip-timer" class="pip-timer" data-status="${escapeHtml(state.status)}">
+            ${escapeHtml(DOM.timerDisplay.textContent)}
+          </div>
         </div>
 
         <div id="pip-alert-banner" class="pip-alert-banner">
@@ -5152,7 +5185,7 @@ async function togglePiP() {
       if (!root) return;
       root.style.setProperty('--pip-w', `${w}px`);
       root.style.setProperty('--pip-h', `${h}px`);
-      if (h < 65 && w >= 170) {
+      if (h < 74 && w >= 170) {
         root.setAttribute('data-layout', 'compact-row');
       } else {
         root.setAttribute('data-layout', 'column');
@@ -5284,7 +5317,7 @@ async function handleExportCSV() {
     const goalMs = state.settings.dailyGoal * 3600000;
 
     records.forEach(r => {
-      const focusText = formatFocusPercentage(r.studyTime, r.sessionTime);
+      const focusText = formatFocusPercentage(r.studyTime, (r.sessionTime || 0) + (r.pausedTime || 0));
       const goalMet = r.studyTime >= goalMs ? 'Yes' : 'No';
       csv += `"${r.date}",`;
       csv += `${r.studyTime},`;
@@ -5495,6 +5528,19 @@ function attachEventListeners() {
     DOM.shortcutAnalyticsBtn.addEventListener('click', () => switchTab('history'));
   }
 
+  if (DOM.secondaryAuditDrawer) {
+    try {
+      if (localStorage.getItem('ayush_audit_open') === 'true') {
+        DOM.secondaryAuditDrawer.open = true;
+      }
+      DOM.secondaryAuditDrawer.addEventListener('toggle', () => {
+        try {
+          localStorage.setItem('ayush_audit_open', DOM.secondaryAuditDrawer.open ? 'true' : 'false');
+        } catch (_) { }
+      });
+    } catch (_) { }
+  }
+
   // Timer controls
   DOM.startBtn.addEventListener('click', handleStart);
   DOM.endBtn.addEventListener('click', () => handleEnd(Date.now(), getMonotonicNow()));
@@ -5530,10 +5576,13 @@ function checkDayRollover() {
   const currentDayStr = getLocalDateString();
   if (state.session.dateStr && state.session.dateStr !== currentDayStr) {
     const now = Date.now();
-    const gap = now - (state.lastTickTimestamp || now);
+    const hasLastTick = typeof state.lastTickTimestamp === 'number' && state.lastTickTimestamp > 0;
+    const gap = hasLastTick ? (now - state.lastTickTimestamp) : Infinity;
     const isSleep = gap > CONFIG.lidGapMs;
     if (state.session.active) {
-      handleMidnightRollover(now, currentDayStr, isSleep ? state.lastTickTimestamp : null);
+      const mid = new Date(now);
+      mid.setHours(0, 0, 0, 0);
+      handleMidnightRollover(now, currentDayStr, isSleep ? (state.lastTickTimestamp || mid.getTime()) : null);
     } else {
       loadTodayState();
       refreshDashboard();
@@ -5689,6 +5738,7 @@ if (typeof module !== 'undefined' && module.exports) {
     setCameraPreviewEnabled,
     showToast,
     dismissToast,
+    setStatus,
     openSettings,
     closeSettings,
     cancelCalibration,

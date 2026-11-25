@@ -38,6 +38,7 @@ const {
   adjustDailyGoal,
   showToast,
   dismissToast,
+  setStatus,
   openSettings,
   closeSettings,
   cancelCalibration,
@@ -3075,6 +3076,8 @@ describe('Ayush_Tracker — Suite 23: Settings Persistence, Pose Math, Calibrati
 });
 
 describe('Hardware Instrument & Toast Controls', () => {
+  beforeEach(resetAppState);
+
   test('setFocusThreshold clamps 50-99 and syncs threshold dial and settings control', () => {
     const prevThreshold = state.settings.focusThreshold;
     try {
@@ -3169,6 +3172,70 @@ describe('Hardware Instrument & Toast Controls', () => {
       container.appendChild = origAppend;
       container.removeChild = origRemoveChild;
       container.querySelectorAll = origQsa;
+    }
+  });
+
+  test('handleMidnightRollover rejects multi-hour post-midnight inflation when stale or missing sleepAnchor', () => {
+    const day2 = new Date(2026, 10, 25, 19, 45, 0);
+    const day2Str = getLocalDateString(day2.getTime());
+    const day1Date = new Date(2026, 10, 24, 23, 50, 0);
+    const day1Str = getLocalDateString(day1Date.getTime());
+
+    state.session.active = true;
+    state.session.id = 'day_' + day1Str;
+    state.session.dateStr = day1Str;
+    state.session.startTime = day1Date.getTime();
+    state.session.studyStartedAt = day1Date.getTime();
+    state.session.studyTime = 600000;
+    state.session.accStudyMs = 600000;
+    state.status = 'studying';
+    state.lastTickTimestamp = 0;
+    state.lastTickMonotonic = null;
+
+    handleMidnightRollover(day2.getTime(), day2Str);
+
+    assert.equal(state.session.dateStr, day2Str);
+    assert.equal(state.session.studyTime, 0, 'Must never credit 19h 45m across stale day rollover');
+    assert.equal(state.status, 'lid-closed');
+    state.session.active = false;
+  });
+
+  test('buildDashboardStats includes pausedTime in Analytics Focus % matching Tracker', () => {
+    const todayStr = getLocalDateString();
+    state.session.studyTime = 1800000;
+    state.session.sessionTime = 1800000;
+    state.session.pausedTime = 1800000;
+
+    buildDashboardStats([
+      {
+        date: todayStr,
+        studyTime: 1800000,
+        sessionTime: 1800000,
+        pausedTime: 1800000,
+        distractions: { lookAway: 2, away: 0, lidClosed: 0 },
+      },
+    ]);
+
+    assert.equal(DOM.dashFocus.textContent, '50%');
+    assert.equal(DOM.homeFocus.textContent, '50%');
+    state.session.studyTime = 0;
+    state.session.sessionTime = 0;
+    state.session.pausedTime = 0;
+  });
+
+  test('setStatus preserves user-expanded secondaryAuditDrawer across active status changes', () => {
+    const drawer = DOM.secondaryAuditDrawer;
+    const prevOpen = drawer.open;
+    const prevActive = state.session.active;
+    try {
+      drawer.open = true;
+      state.session.active = true;
+      setStatus('studying');
+      assert.equal(drawer.open, true);
+    } finally {
+      drawer.open = prevOpen;
+      state.session.active = prevActive;
+      setStatus('idle');
     }
   });
 });
