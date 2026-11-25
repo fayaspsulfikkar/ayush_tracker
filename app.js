@@ -5095,18 +5095,21 @@ async function togglePiP() {
         font-feature-settings: 'tnum' 1, 'zero' 1;
         font-size: clamp(1.15rem, min(42cqh, 15.5cqw), 4.6rem);
         font-weight: 500; letter-spacing: 0.06em; line-height: 1;
-        color: #F2F1EC;
-        background: linear-gradient(180deg, #FFFFFF 0%, #ECEBE5 36%, #B4B3AB 53%, #DFDED6 75%, #9E9D95 100%);
-        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-        filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.85)) drop-shadow(0 -1px 0 rgba(255, 255, 255, 0.14));
+        color: #E8E7DF;
+        text-shadow:
+          0 -1px 0 rgba(255, 255, 255, 0.45),
+          0 1px 0 rgba(120, 120, 112, 0.55),
+          0 2px 3px rgba(0, 0, 0, 0.9);
         text-align: center; white-space: nowrap;
       }
       .pip-root[data-status="looking-away"] .pip-timer,
       .pip-root[data-status="away"] .pip-timer,
       .pip-root[data-status="lid-closed"] .pip-timer {
-        color: #F2784B;
-        background: linear-gradient(180deg, #FFC5AE 0%, #F27C50 38%, #B83D12 54%, #EB6A3B 76%, #942F0D 100%);
-        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        color: #F07346;
+        text-shadow:
+          0 -1px 0 rgba(255, 198, 174, 0.4),
+          0 1px 0 rgba(130, 42, 12, 0.7),
+          0 2px 3px rgba(0, 0, 0, 0.9);
       }
       .pip-alert-banner {
         width: 100%; display: none; align-items: center; justify-content: center; gap: 5px;

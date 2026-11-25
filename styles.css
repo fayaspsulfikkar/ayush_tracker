@@ -595,52 +595,33 @@ body {
   font-weight: 500;
   letter-spacing: 0.08em;
   line-height: 1;
-  color: #EAE9E3;
-  background: linear-gradient(
-    180deg,
-    #FFFFFF 0%,
-    #ECEBE5 35%,
-    #B4B3AB 52%,
-    #DFDED6 74%,
-    #9C9B93 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 -1px 0 rgba(255, 255, 255, 0.16));
+  color: #E2E1D9;
+  text-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.45),
+    0 1px 0 rgba(120, 120, 112, 0.55),
+    0 2px 3px rgba(0, 0, 0, 0.92),
+    0 4px 10px rgba(0, 0, 0, 0.65);
   text-align: center;
   white-space: nowrap;
-  transition: filter var(--t-norm), opacity var(--t-norm);
+  transition: color var(--t-norm), text-shadow var(--t-norm);
 }
 
 .timer-display.active {
-  color: #F2F1EC;
-  background: linear-gradient(
-    180deg,
-    #FFFFFF 0%,
-    #F3F2EC 38%,
-    #C4C3BB 54%,
-    #EAE9E2 76%,
-    #AEADA5 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #F2F1EB;
+  text-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 0 rgba(138, 138, 128, 0.55),
+    0 2px 3px rgba(0, 0, 0, 0.92),
+    0 4px 12px rgba(0, 0, 0, 0.7);
 }
 
 .timer-display.paused {
-  color: #F2784B;
-  background: linear-gradient(
-    180deg,
-    #FFC5AE 0%,
-    #F27C50 38%,
-    #B83D12 54%,
-    #EB6A3B 76%,
-    #942F0D 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #F07346;
+  text-shadow:
+    0 -1px 0 rgba(255, 198, 174, 0.45),
+    0 1px 0 rgba(130, 42, 12, 0.7),
+    0 2px 3px rgba(0, 0, 0, 0.92),
+    0 4px 12px rgba(0, 0, 0, 0.7);
 }
 
 .timer-caption {
