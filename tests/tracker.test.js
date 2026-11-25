@@ -18,6 +18,9 @@
 
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { installNodeShims } = require('./node-shims.js');
+
+installNodeShims(globalThis);
 
 const {
   CONFIG,
@@ -27,6 +30,19 @@ const {
   formatDuration,
   formatFocusPercentage,
   getLocalDateString,
+  loadSettings,
+  saveSettings,
+  setCameraPreviewEnabled,
+  setFocusThreshold,
+  setSensitivityCone,
+  adjustDailyGoal,
+  showToast,
+  dismissToast,
+  openSettings,
+  closeSettings,
+  cancelCalibration,
+  escapeHtml,
+  calculateHeadPose,
   calculateFocusScore,
   calculateYaw,
   calculatePitch,
@@ -2415,6 +2431,7 @@ describe('Ayush_Tracker — Suite 19: Race-Safe Simultaneous Two-Tab Locking', (
       requestAnimationFrame: () => 0,
       cancelAnimationFrame: () => {},
     };
+    installNodeShims(ctx);
     ctx.globalThis = ctx;
     vm.runInNewContext(code, ctx);
     return mod.exports;
@@ -2856,6 +2873,7 @@ describe('Ayush_Tracker — Suite 22: Fail-Safe Cross-Tab Locking & Clock Jump R
       requestAnimationFrame: () => 0,
       cancelAnimationFrame: () => { },
     };
+    installNodeShims(ctx);
     ctx.globalThis = ctx;
     vm.runInNewContext(code, ctx);
     return mod.exports;
@@ -2935,6 +2953,226 @@ describe('Ayush_Tracker — Suite 22: Fail-Safe Cross-Tab Locking & Clock Jump R
     await releaseTabLock('tab_intruder_2');
   });
 });
+
+// ═══════════════════════════════════════════════
+// Suite 23: Settings Versioning, Pose Math, Calibration Cancel & UI Safety
+// ═══════════════════════════════════════════════
+
+describe('Ayush_Tracker — Suite 23: Settings Persistence, Pose Math, Calibration & UI Safety', () => {
+  beforeEach(resetAppState);
+
+  test('loadSettings migrates legacy v1 once and preserves subsequent deliberate user choices', () => {
+    localStorage.setItem('ayush-tracker-settings', JSON.stringify({
+      sensitivity: 'medium',
+      focusThreshold: 80,
+      lookawayTime: 10,
+      awayTime: 30,
+      dailyGoal: 4,
+    }));
+
+    loadSettings();
+    assert.equal(state.settings.settingsVersion, 2);
+    assert.equal(state.settings.sensitivity, 'low');
+    assert.equal(state.settings.focusThreshold, 50);
+
+    // User deliberately selects medium / 80% / 4h goal in v2
+    state.settings.sensitivity = 'medium';
+    state.settings.focusThreshold = 80;
+    state.settings.dailyGoal = 4;
+    saveSettings();
+
+    // Subsequent reload must preserve user choices
+    state.settings.sensitivity = 'low';
+    state.settings.focusThreshold = 50;
+    state.settings.dailyGoal = 6;
+    loadSettings();
+
+    assert.equal(state.settings.sensitivity, 'medium');
+    assert.equal(state.settings.focusThreshold, 80);
+    assert.equal(state.settings.dailyGoal, 4);
+  });
+
+  test('setCameraPreviewEnabled synchronizes both checkboxes, wrapper display, and settings storage', () => {
+    setCameraPreviewEnabled(true, true);
+    assert.equal(state.settings.cameraPreview, true);
+    assert.equal(DOM.settingCameraPreview.checked, true);
+    assert.equal(DOM.livePreviewCb.checked, true);
+    assert.equal(DOM.liveCameraWrapper.style.display, 'block');
+
+    const persisted = JSON.parse(localStorage.getItem('ayush-tracker-settings'));
+    assert.equal(persisted.cameraPreview, true);
+
+    setCameraPreviewEnabled(false, true);
+    assert.equal(state.settings.cameraPreview, false);
+    assert.equal(DOM.settingCameraPreview.checked, false);
+    assert.equal(DOM.livePreviewCb.checked, false);
+    assert.equal(DOM.liveCameraWrapper.style.display, 'none');
+  });
+
+  test('calculateHeadPose evaluates neutral, yaw left/right, and pitch up/down accurately', () => {
+    const makeLandmarks = ({ noseX = 0.5, noseY = 0.525, leftZ = 0, rightZ = 0, topZ = 0, chinZ = 0 } = {}) => {
+      const lm = Array.from({ length: 470 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+      lm[234] = { x: 0.3, y: 0.5, z: rightZ }; // right cheek
+      lm[454] = { x: 0.7, y: 0.5, z: leftZ };  // left cheek
+      lm[10] = { x: 0.5, y: 0.2, z: topZ };    // forehead
+      lm[152] = { x: 0.5, y: 0.8, z: chinZ };  // chin
+      lm[33] = { x: 0.4, y: 0.4, z: 0 };
+      lm[263] = { x: 0.6, y: 0.4, z: 0 };
+      lm[61] = { x: 0.45, y: 0.65, z: 0 };
+      lm[291] = { x: 0.55, y: 0.65, z: 0 };
+      lm[4] = { x: noseX, y: noseY, z: 0 };    // nose tip
+      return lm;
+    };
+
+    const neutral = calculateHeadPose(makeLandmarks());
+    assert.ok(Math.abs(neutral.yaw) < 1, `Expected near-zero neutral yaw, got ${neutral.yaw}`);
+    assert.ok(Math.abs(neutral.pitch) < 1, `Expected near-zero neutral pitch, got ${neutral.pitch}`);
+
+    const turnedRight = calculateHeadPose(makeLandmarks({ noseX: 0.64, rightZ: 0.08, leftZ: -0.08 }));
+    assert.ok(turnedRight.yaw > 15, `Expected positive yaw when turned right, got ${turnedRight.yaw}`);
+
+    const turnedLeft = calculateHeadPose(makeLandmarks({ noseX: 0.36, rightZ: -0.08, leftZ: 0.08 }));
+    assert.ok(turnedLeft.yaw < -15, `Expected negative yaw when turned left, got ${turnedLeft.yaw}`);
+
+    const lookingDown = calculateHeadPose(makeLandmarks({ noseY: 0.63, chinZ: 0.08, topZ: -0.08 }));
+    assert.ok(lookingDown.pitch > 10, `Expected positive pitch when looking down, got ${lookingDown.pitch}`);
+  });
+
+  test('cancelCalibration resets calibration state and returns status to idle', () => {
+    state.calibration.isCalibrating = true;
+    state.status = 'calibrating';
+    const cancelled = cancelCalibration();
+    assert.equal(cancelled, true);
+    assert.equal(state.calibration.isCalibrating, false);
+    assert.equal(state.status, 'idle');
+  });
+
+  test('runDetection displays "—" for liveSinceFace when no face has ever been seen', () => {
+    const prevLandmarker = state.camera.faceLandmarker;
+    const prevVideo = DOM.cameraPreview;
+    try {
+      state.headPose.lastFaceSeen = 0;
+      DOM.cameraPreview = { readyState: 4, videoWidth: 640, videoHeight: 480 };
+      state.camera.faceLandmarker = { detectForVideo: () => ({ faceLandmarks: [] }) };
+
+      runDetection(1700000000000, 1000);
+      assert.equal(DOM.liveSinceFace.textContent, '—');
+    } finally {
+      state.camera.faceLandmarker = prevLandmarker;
+      DOM.cameraPreview = prevVideo;
+    }
+  });
+
+  test('escapeHtml neutralizes HTML special characters and openSettings toggles inert', () => {
+    assert.equal(escapeHtml('<img src=x onerror="alert(1)">'), '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+
+    openSettings();
+    assert.equal(DOM.settingsPanel.getAttribute('aria-hidden'), 'false');
+    closeSettings();
+    assert.equal(DOM.settingsPanel.getAttribute('aria-hidden'), 'true');
+    assert.equal(DOM.settingsPanel.getAttribute('inert'), '');
+  });
+});
+
+describe('Hardware Instrument & Toast Controls', () => {
+  test('setFocusThreshold clamps 50-99 and syncs threshold dial and settings control', () => {
+    const prevThreshold = state.settings.focusThreshold;
+    try {
+      setFocusThreshold(120, false);
+      assert.equal(state.settings.focusThreshold, 99);
+      assert.equal(DOM.dialCutoffLabel.textContent, '99%');
+      assert.equal(DOM.thresholdDial.getAttribute('aria-valuenow'), '99');
+      assert.equal(String(DOM.settingFocusThreshold.value), '99');
+
+      setFocusThreshold(12, false);
+      assert.equal(state.settings.focusThreshold, 50);
+      assert.equal(DOM.dialCutoffLabel.textContent, '50%');
+
+      setFocusThreshold(74, false);
+      assert.equal(state.settings.focusThreshold, 74);
+      assert.equal(DOM.dialCutoffLabel.textContent, '74%');
+    } finally {
+      setFocusThreshold(prevThreshold, false);
+    }
+  });
+
+  test('setSensitivityCone normalizes mode and syncs settings select', () => {
+    const prevSens = state.settings.sensitivity;
+    try {
+      setSensitivityCone('high', false);
+      assert.equal(state.settings.sensitivity, 'high');
+      assert.equal(DOM.settingSensitivity.value, 'high');
+
+      setSensitivityCone('invalid-mode', false);
+      assert.equal(state.settings.sensitivity, 'low');
+      assert.equal(DOM.settingSensitivity.value, 'low');
+    } finally {
+      setSensitivityCone(prevSens, false);
+    }
+  });
+
+  test('adjustDailyGoal clamps 0.5-16h and updates HUD target display', () => {
+    const prevGoal = state.settings.dailyGoal;
+    try {
+      state.settings.dailyGoal = 6;
+      adjustDailyGoal(0.5);
+      assert.equal(state.settings.dailyGoal, 6.5);
+      assert.equal(DOM.hwGoalVal.textContent, '6.5h');
+
+      state.settings.dailyGoal = 16;
+      adjustDailyGoal(0.5);
+      assert.equal(state.settings.dailyGoal, 16);
+
+      state.settings.dailyGoal = 0.5;
+      adjustDailyGoal(-0.5);
+      assert.equal(state.settings.dailyGoal, 0.5);
+    } finally {
+      state.settings.dailyGoal = prevGoal;
+    }
+  });
+
+  test('showToast caps visible stack at 2, coalesces matching titles, and auto-dismisses without animationend', async () => {
+    const container = DOM.toastContainer;
+    const origAppend = container.appendChild;
+    const origRemoveChild = container.removeChild;
+    const origQsa = container.querySelectorAll;
+    container.children = [];
+    container.appendChild = (child) => {
+      child.parentNode = container;
+      child.remove = () => {
+        origRemoveChild.call(container, child);
+        child.parentNode = null;
+      };
+      return origAppend.call(container, child);
+    };
+    container.querySelectorAll = (sel) => {
+      if (sel === '.toast') return container.children.filter((c) => c.classList.contains('toast'));
+      return [];
+    };
+
+    try {
+      showToast('info', 'Calibration Done', 'First', 5000);
+      showToast('info', 'Calibration Done', 'Updated', 5000);
+      assert.equal(container.children.length, 1);
+
+      showToast('info', 'Second Notice', 'Msg 2', 5000);
+      showToast('info', 'Third Notice', 'Msg 3', 5000);
+      assert.equal(container.children.length, 2);
+
+      const first = container.children[0];
+      dismissToast(first);
+      assert.equal(first.classList.contains('removing'), true);
+      await new Promise((r) => setTimeout(r, 260));
+      assert.equal(container.children.includes(first), false);
+    } finally {
+      container.children = [];
+      container.appendChild = origAppend;
+      container.removeChild = origRemoveChild;
+      container.querySelectorAll = origQsa;
+    }
+  });
+});
+
 
 
 

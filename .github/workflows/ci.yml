@@ -22,7 +22,7 @@ jobs:
 
       - name: Syntax & Lint Check
         run: |
-          node -c app.js sw.js worker.js tests/tracker.test.js
+          node -c app.js sw.js worker.js tests/node-shims.js tests/tracker.test.js
 
       - name: Run Unit Tests
         run: |

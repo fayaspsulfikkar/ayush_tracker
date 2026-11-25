@@ -5,7 +5,7 @@
   "main": "app.js",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "lint": "node -c app.js sw.js worker.js",
+    "lint": "node -c app.js sw.js worker.js tests/node-shims.js tests/tracker.test.js",
     "start": "python3 -m http.server 8080"
   },
   "repository": {

@@ -17,7 +17,7 @@
    When you update the app, bump CACHE_VERSION to force a refresh.
    ============================================ */
 
-const CACHE_VERSION = 'ayush-tracker-v11';
+const CACHE_VERSION = 'ayush-tracker-v13';
 
 // List of files to pre-cache when the service worker installs.
 // These files will be available offline immediately after first load.
@@ -28,6 +28,7 @@ const FILES_TO_CACHE = [
   './app.js',
   './worker.js',
   './manifest.webmanifest',
+  './favicon.ico',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable.png',
@@ -35,6 +36,12 @@ const FILES_TO_CACHE = [
   './fonts/Nunito-Regular.woff2',
   './fonts/Nunito-SemiBold.woff2',
   './fonts/Nunito-Bold.woff2',
+  './models/vision_bundle.mjs',
+  './models/face_landmarker.task',
+  './models/wasm/vision_wasm_internal.js',
+  './models/wasm/vision_wasm_internal.wasm',
+  './models/wasm/vision_wasm_nosimd_internal.js',
+  './models/wasm/vision_wasm_nosimd_internal.wasm',
 ];
 
 /**
@@ -43,12 +50,12 @@ const FILES_TO_CACHE = [
  * We open a cache and add all our app files to it.
  */
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v2...');
+  console.log('[SW] Installing service worker', CACHE_VERSION);
 
   event.waitUntil(
     caches.open(CACHE_VERSION)
       .then((cache) => {
-        console.log('[SW] Pre-caching app shell');
+        console.log('[SW] Pre-caching app shell & offline AI models');
         return cache.addAll(FILES_TO_CACHE);
       })
       .then(() => {
@@ -64,7 +71,7 @@ self.addEventListener('install', (event) => {
  * We delete old caches so we don't waste storage.
  */
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v2...');
+  console.log('[SW] Activating service worker', CACHE_VERSION);
 
   event.waitUntil(
     caches.keys()
@@ -88,14 +95,39 @@ self.addEventListener('activate', (event) => {
 /**
  * FETCH EVENT
  * Intercepts every network request the app makes.
- * 
- * Strategy: Network-first for app files (so updates on localhost are immediate),
- * with cache fallback for offline capability.
+ *
+ * - Cache-first for large/immutable local assets (/models/, /fonts/, /icons/)
+ * - Network-first with cache fallback for app shell documents/scripts/styles
  */
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+  const isImmutableAsset =
+    url.origin === self.location.origin &&
+    (url.pathname.includes('/models/') ||
+      url.pathname.includes('/fonts/') ||
+      url.pathname.includes('/icons/') ||
+      url.pathname.endsWith('/favicon.ico'));
 
-  // For same-origin files (app.js, styles.css, index.html, etc.): Network-first with cache fallback
+  if (isImmutableAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) return cachedResponse;
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // For same-origin app shell files (app.js, styles.css, index.html, etc.): Network-first with cache fallback
   if (url.origin === self.location.origin) {
     event.respondWith(
       fetch(event.request)
@@ -113,7 +145,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Fallback for any other requests (e.g. models or assets): cache first, then network
+  // Fallback for any other requests: cache first, then network
   event.respondWith(
     caches.match(event.request)
       .then((cachedResponse) => {

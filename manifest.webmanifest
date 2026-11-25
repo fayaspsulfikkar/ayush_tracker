@@ -5,9 +5,12 @@
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#EDEBFF",
-  "theme_color": "#6D5BE0",
-  "categories": ["education", "productivity"],
+  "background_color": "#ECECE7",
+  "theme_color": "#D94E1F",
+  "categories": [
+    "education",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",

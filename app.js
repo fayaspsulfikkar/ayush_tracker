@@ -12,212 +12,15 @@
 
 'use strict';
 
-// ── Node.js / Headless Test Environment Shim ──
-if (typeof globalThis !== 'undefined' && typeof globalThis.document === 'undefined') {
-  const createDummyEl = () => {
-    const el = {
-      textContent: '',
-      innerHTML: '',
-      style: {},
-      classes: new Set(),
-      children: [],
-      childNodes: [],
-      classList: {
-        add(c) { el.classes.add(c); },
-        remove(c) { el.classes.delete(c); },
-        toggle(c) { el.classes.has(c) ? el.classes.delete(c) : el.classes.add(c); },
-        contains(c) { return el.classes.has(c); }
-      },
-      addEventListener: () => { },
-      removeEventListener: () => { },
-      appendChild(c) { el.children.push(c); return c; },
-      removeChild(c) {
-        const i = el.children.indexOf(c);
-        if (i >= 0) el.children.splice(i, 1);
-        return c;
-      },
-      prepend(c) { el.children.unshift(c); },
-      remove() { },
-      setAttribute: () => { },
-      getAttribute: () => '',
-      removeAttribute: () => { },
-      querySelector: () => createDummyEl(),
-      querySelectorAll: () => [],
-      value: '',
-      checked: false,
-      disabled: false,
-      focus: () => { },
-      blur: () => { },
-    };
-    Object.defineProperty(el, 'lastChild', {
-      get() { return el.children[el.children.length - 1] || null; }
-    });
-    Object.defineProperty(el, 'firstChild', {
-      get() { return el.children[0] || null; }
-    });
-    return el;
-  };
+const _getEl = (id) => (typeof document !== 'undefined' ? document.getElementById(id) : null);
 
-  globalThis.document = {
-    getElementById: () => createDummyEl(),
-    querySelector: () => createDummyEl(),
-    querySelectorAll: () => [],
-    createElement: () => createDummyEl(),
-    addEventListener: () => { },
-    removeEventListener: () => { },
-    documentElement: { setAttribute: () => { }, getAttribute: () => 'light', classList: { add: () => { }, remove: () => { } } },
-    body: { appendChild: () => { }, removeChild: () => { }, classList: { add: () => { }, remove: () => { } } },
-    readyState: 'complete',
-    styleSheets: [],
-  };
-}
-if (typeof globalThis !== 'undefined' && typeof globalThis.window === 'undefined') {
-  globalThis.window = {
-    addEventListener: () => { },
-    removeEventListener: () => { },
-    location: { search: '' },
-    localStorage: {
-      _data: {},
-      getItem(k) { return this._data[k] || null; },
-      setItem(k, v) { this._data[k] = String(v); },
-      removeItem(k) { delete this._data[k]; },
-      clear() { this._data = {}; }
-    }
-  };
-  globalThis.localStorage = globalThis.window.localStorage;
-}
-if (typeof globalThis !== 'undefined' && typeof globalThis.navigator === 'undefined') {
-  globalThis.navigator = {
-    userAgent: 'node',
-    serviceWorker: { register: () => Promise.resolve() }
-  };
-}
-if (typeof globalThis !== 'undefined' && typeof globalThis.confirm === 'undefined') {
-  globalThis.confirm = () => true;
-}
-if (typeof globalThis !== 'undefined' && typeof globalThis.indexedDB === 'undefined') {
-  const mockStores = new Map();
-  const rwQueues = new Map();
-  const getStoreMap = (storeName) => {
-    if (!mockStores.has(storeName)) mockStores.set(storeName, new Map());
-    return mockStores.get(storeName);
-  };
-  const enqueueRw = (key, fn) => {
-    const prev = rwQueues.get(key) || Promise.resolve();
-    const next = prev.then(fn, fn);
-    rwQueues.set(key, next);
-    return next;
-  };
-  globalThis.indexedDB = {
-    open(name, version) {
-      const req = {
-        onsuccess: null,
-        onerror: null,
-        onupgradeneeded: null,
-        result: {
-          name,
-          version,
-          objectStoreNames: { contains: () => true },
-          createObjectStore(storeName) {
-            getStoreMap(storeName);
-            return { createIndex: () => { } };
-          },
-          transaction(stores, mode) {
-            const storeList = Array.isArray(stores) ? stores : [stores];
-            const primaryStore = storeList[0] || 'sessions';
-            const tx = {
-              oncomplete: null,
-              onerror: null,
-              onabort: null,
-              _pending: 0,
-              _ready: false,
-              _aborted: false,
-              _scheduleFinish() {
-                if (tx._ready && tx._pending === 0 && !tx._aborted) {
-                  if (tx.oncomplete) tx.oncomplete();
-                }
-              },
-              abort() {
-                tx._aborted = true;
-                if (tx.onabort) tx.onabort();
-              },
-              objectStore(storeName) {
-                const storeMap = getStoreMap(storeName);
-                const runOp = (exec) => {
-                  const r = { onsuccess: null, onerror: null, result: undefined };
-                  tx._pending++;
-                  const execute = () => {
-                    if (tx._aborted) {
-                      tx._pending--;
-                      return;
-                    }
-                    try {
-                      r.result = exec();
-                      if (r.onsuccess) r.onsuccess({ target: r });
-                    } catch (err) {
-                      r.error = err;
-                      tx.error = err;
-                      if (r.onerror) r.onerror({ target: r });
-                      if (tx.onerror) tx.onerror({ target: r });
-                    } finally {
-                      tx._pending--;
-                      tx._scheduleFinish();
-                    }
-                  };
-                  if (mode === 'readwrite') {
-                    tx._gate.then(() => setTimeout(execute, 0));
-                  } else {
-                    setTimeout(execute, 0);
-                  }
-                  return r;
-                };
-                return {
-                  get(key) { return runOp(() => storeMap.get(key) ?? null); },
-                  getAll() { return runOp(() => Array.from(storeMap.values())); },
-                  put(val) { return runOp(() => { storeMap.set(val.id, val); return val.id; }); },
-                  delete(key) { return runOp(() => { storeMap.delete(key); return undefined; }); },
-                  clear() { return runOp(() => { storeMap.clear(); return undefined; }); },
-                  count() { return runOp(() => storeMap.size); },
-                };
-              }
-            };
-            if (mode === 'readwrite') {
-              let unlockTx;
-              const gateDone = new Promise((res) => { unlockTx = res; });
-              let startResolve;
-              tx._gate = new Promise((res) => { startResolve = res; });
-              enqueueRw(primaryStore, () => {
-                startResolve();
-                return gateDone;
-              });
-              const origFinish = tx._scheduleFinish;
-              tx._scheduleFinish = () => {
-                if (tx._ready && tx._pending === 0) {
-                  unlockTx();
-                }
-                origFinish();
-              };
-              const origAbort = tx.abort;
-              tx.abort = () => {
-                unlockTx();
-                origAbort();
-              };
-              setTimeout(() => { tx._ready = true; tx._scheduleFinish(); }, 0);
-            } else {
-              tx._gate = Promise.resolve();
-              setTimeout(() => { tx._ready = true; tx._scheduleFinish(); }, 0);
-            }
-            return tx;
-          },
-          close() { }
-        }
-      };
-      setTimeout(() => {
-        if (req.onsuccess) req.onsuccess({ target: req });
-      }, 0);
-      return req;
-    }
-  };
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ═══════════════════════════════════════════════
@@ -258,11 +61,34 @@ const DOM = {
   privacyModal: document.getElementById('privacy-modal'),
   privacyAcceptBtn: document.getElementById('privacy-accept-btn'),
 
-  // Calibration
-  calibrationOverlay: document.getElementById('calibration-overlay'),
-  calibrationProgressBar: document.getElementById('calibration-progress-bar'),
-  calibrationCountdown: document.getElementById('calibration-countdown'),
-  calibrationSubstatus: document.getElementById('calibration-substatus'),
+  // Calibration (Inline Optical Viewfinder HUD)
+  calibrationOverlay: _getEl('calibration-overlay'),
+  calibrationProgressBar: _getEl('calibration-progress-bar'),
+  calibrationCountdown: _getEl('calibration-countdown'),
+  calibrationSubstatus: _getEl('calibration-substatus'),
+  calibrationCancelBtn: _getEl('calibration-cancel-btn'),
+  calibrationArc: _getEl('calibration-arc'),
+
+  // Instrument Hardware Controls
+  homeInstrument: _getEl('home-instrument'),
+  signalBars: _getEl('signal-bars'),
+  horizonGroup: _getEl('hud-horizon-group'),
+  calHwBtn: _getEl('cal-hw-btn'),
+  thresholdDial: _getEl('threshold-dial'),
+  dialCutoffLabel: _getEl('dial-cutoff-label'),
+  coneSwitch: _getEl('cone-switch'),
+  hwReadingBtn: _getEl('hw-reading-btn'),
+  hwSoundBtn: _getEl('hw-sound-btn'),
+  hwPipBtn: _getEl('hw-pip-btn'),
+  hudLiveFocus: _getEl('hud-live-focus'),
+  hudLiveDistractions: _getEl('hud-live-distractions'),
+  goalDecBtn: _getEl('goal-dec-btn'),
+  goalIncBtn: _getEl('goal-inc-btn'),
+  hwGoalVal: _getEl('hw-goal-val'),
+  goalSegments: _getEl('goal-segments'),
+  goalPctBadge: _getEl('goal-pct-badge'),
+  shortcutAnalyticsBtn: _getEl('shortcut-analytics-btn'),
+  secondaryAuditDrawer: _getEl('secondary-audit-drawer'),
 
   // Header
   cameraIndicator: document.getElementById('camera-indicator'),
@@ -396,6 +222,7 @@ const state = {
 
   // Settings (loaded from localStorage)
   settings: {
+    settingsVersion: 2,
     sensitivity: 'low',        // 'low' | 'medium' | 'high'
     focusThreshold: 50,        // percentage (50-99): timer pauses if focus < focusThreshold
     lookawayTime: 3,           // seconds
@@ -527,37 +354,68 @@ const CONFIG = {
 // 3. SETTINGS — Load & Save
 // ═══════════════════════════════════════════════
 
+function setCameraPreviewEnabled(enabled, persist = true) {
+  const isEnabled = Boolean(enabled);
+  state.settings.cameraPreview = isEnabled;
+  if (DOM.settingCameraPreview) DOM.settingCameraPreview.checked = isEnabled;
+  if (DOM.livePreviewCb) DOM.livePreviewCb.checked = isEnabled;
+  if (DOM.liveCameraWrapper) {
+    DOM.liveCameraWrapper.style.display = isEnabled ? 'block' : 'none';
+  }
+  if (!isEnabled && DOM.liveCanvas && typeof DOM.liveCanvas.getContext === 'function') {
+    const ctx = DOM.liveCanvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, DOM.liveCanvas.width || 0, DOM.liveCanvas.height || 0);
+  }
+  if (persist) saveSettings();
+}
+
 function loadSettings() {
+  let migratedFromLegacy = false;
   try {
     const saved = localStorage.getItem('ayush-tracker-settings') || localStorage.getItem('ai-spectator-settings');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Migrate previous legacy defaults to new defaults if they were untouched
-      if (parsed.focusThreshold === 80 || parsed.focusThreshold === 95) parsed.focusThreshold = 50;
-      if (parsed.sensitivity === 'medium') parsed.sensitivity = 'low';
-      if (parsed.lookawayTime === 10) parsed.lookawayTime = 3;
-      if (parsed.awayTime === 30) parsed.awayTime = 10;
-      if (parsed.dailyGoal === 4) parsed.dailyGoal = 6;
-      Object.assign(state.settings, parsed);
+      // One-time migration for unversioned v1 legacy defaults; preserve deliberate user edits thereafter
+      if (parsed && parsed.settingsVersion !== 2) {
+        if (parsed.focusThreshold === 80 || parsed.focusThreshold === 95) parsed.focusThreshold = 50;
+        if (parsed.sensitivity === 'medium') parsed.sensitivity = 'low';
+        if (parsed.lookawayTime === 10) parsed.lookawayTime = 3;
+        if (parsed.awayTime === 30) parsed.awayTime = 10;
+        if (parsed.dailyGoal === 4) parsed.dailyGoal = 6;
+        migratedFromLegacy = true;
+      }
+      if (parsed && typeof parsed === 'object') {
+        Object.assign(state.settings, parsed);
+      }
+      state.settings.settingsVersion = 2;
     }
   } catch (e) {
     console.warn('Could not load settings:', e);
   }
 
-  // Apply to UI controls
-  if (state.settings.focusThreshold === undefined || state.settings.focusThreshold === 80 || state.settings.focusThreshold === 95) {
+  state.settings.settingsVersion = 2;
+  if (typeof state.settings.focusThreshold !== 'number' || !Number.isFinite(state.settings.focusThreshold)) {
     state.settings.focusThreshold = 50;
   }
+  state.settings.focusThreshold = Math.max(50, Math.min(99, state.settings.focusThreshold));
+
+  if (migratedFromLegacy) {
+    saveSettings();
+  }
+
+  // Apply to UI controls
   if (DOM.settingFocusThreshold) {
-    DOM.settingFocusThreshold.value = state.settings.focusThreshold ?? 50;
+    DOM.settingFocusThreshold.value = state.settings.focusThreshold;
     if (DOM.settingFocusThresholdVal) {
-      DOM.settingFocusThresholdVal.textContent = (state.settings.focusThreshold ?? 50) + '%';
+      DOM.settingFocusThresholdVal.textContent = state.settings.focusThreshold + '%';
     }
   }
   if (DOM.liveFocusThresholdTag) {
-    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${(state.settings.focusThreshold ?? 50)}%`;
+    DOM.liveFocusThresholdTag.textContent = `Cutoff: ${state.settings.focusThreshold}%`;
   }
   DOM.settingSensitivity.value = state.settings.sensitivity;
+  syncThresholdDial();
+  syncConeSwitch();
   DOM.settingLookawayTime.value = state.settings.lookawayTime;
   DOM.settingAwayTime.value = state.settings.awayTime;
   DOM.settingReadingMode.checked = state.settings.readingMode;
@@ -565,11 +423,234 @@ function loadSettings() {
   DOM.settingSound.checked = state.settings.soundOn;
   DOM.settingVolume.value = state.settings.volume;
   DOM.settingNotifications.checked = state.settings.notificationsOn;
-  DOM.settingCameraPreview.checked = state.settings.cameraPreview;
+  syncAuxHardwareToggles();
+  setCameraPreviewEnabled(Boolean(state.settings.cameraPreview), false);
+}
+
+function syncThresholdDial() {
+  const val = Math.max(50, Math.min(99, Number(state.settings.focusThreshold) || 50));
+  state.settings.focusThreshold = val;
+  // Map 50..99% across a -135deg .. +135deg potentiometer arc
+  const ratio = (val - 50) / 49;
+  const deg = -135 + ratio * 270;
+  if (DOM.thresholdDial) {
+    DOM.thresholdDial.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+    DOM.thresholdDial.setAttribute('aria-valuenow', String(val));
+    DOM.thresholdDial.setAttribute('aria-valuetext', `${val}%`);
+  }
+  const dialArc = document.getElementById('threshold-dial-arc');
+  if (dialArc && dialArc.style) {
+    const totalArcLen = 146.08;
+    dialArc.style.strokeDashoffset = (totalArcLen * (1 - ratio)).toFixed(2);
+  }
+  if (DOM.dialCutoffLabel) {
+    DOM.dialCutoffLabel.textContent = `${val}%`;
+  }
+  if (DOM.settingFocusThreshold) {
+    DOM.settingFocusThreshold.value = val;
+  }
+  if (DOM.settingFocusThresholdVal) {
+    DOM.settingFocusThresholdVal.textContent = `${val}%`;
+  }
+  if (DOM.liveFocusThresholdTag) {
+    DOM.liveFocusThresholdTag.textContent = `Min Focus: ${val}%`;
+  }
+}
+
+function setFocusThreshold(val, notify = false, persist = true) {
+  const clamped = Math.max(50, Math.min(99, Math.round(Number(val) || 50)));
+  state.settings.focusThreshold = clamped;
+  syncThresholdDial();
+  if (persist) {
+    saveSettings();
+  }
+  if (notify) {
+    showToast('info', 'Min Focus Updated', `Minimum focus threshold set to ${clamped}%.`, 1800);
+  }
+}
+
+function attachThresholdDialControls(dial) {
+  let dragState = null;
+
+  dial.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    const rect = dial.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+    dragState = {
+      pointerId: e.pointerId,
+      cx,
+      cy,
+      lastAngle: startAngle,
+      lastY: e.clientY,
+      startVal: Number(state.settings.focusThreshold) || 50,
+      accumDeg: 0,
+    };
+    dial.classList.add('dragging');
+    try { dial.setPointerCapture(e.pointerId); } catch (_) { }
+  });
+
+  dial.addEventListener('pointermove', (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    const dx = e.clientX - dragState.cx;
+    const dy = e.clientY - dragState.cy;
+    const dist = Math.hypot(dx, dy);
+    let deltaDeg = 0;
+
+    if (dist >= 12) {
+      const angle = Math.atan2(dy, dx);
+      let deltaRad = angle - dragState.lastAngle;
+      if (deltaRad > Math.PI) deltaRad -= Math.PI * 2;
+      if (deltaRad < -Math.PI) deltaRad += Math.PI * 2;
+      deltaDeg = deltaRad * (180 / Math.PI);
+      dragState.lastAngle = angle;
+    } else {
+      deltaDeg = (dragState.lastY - e.clientY) * 1.8;
+    }
+
+    dragState.lastY = e.clientY;
+    dragState.accumDeg += deltaDeg;
+
+    const nextVal = dragState.startVal + dragState.accumDeg * (49 / 270);
+    setFocusThreshold(nextVal, false, false);
+  });
+
+  const finishDrag = (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    const changed = state.settings.focusThreshold !== dragState.startVal;
+    dial.classList.remove('dragging');
+    try { dial.releasePointerCapture(e.pointerId); } catch (_) { }
+    dragState = null;
+    if (changed) {
+      saveSettings();
+      showToast('info', 'Min Focus Updated', `Minimum focus threshold set to ${state.settings.focusThreshold}%.`, 1800);
+    }
+  };
+
+  dial.addEventListener('pointerup', finishDrag);
+  dial.addEventListener('pointercancel', finishDrag);
+
+  dial.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 2 : -2;
+    setFocusThreshold((Number(state.settings.focusThreshold) || 50) + delta, true);
+  }, { passive: false });
+
+  dial.addEventListener('keydown', (e) => {
+    const cur = Number(state.settings.focusThreshold) || 50;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      setFocusThreshold(cur + 1, true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setFocusThreshold(cur - 1, true);
+    } else if (e.key === 'PageUp') {
+      e.preventDefault();
+      setFocusThreshold(cur + 5, true);
+    } else if (e.key === 'PageDown') {
+      e.preventDefault();
+      setFocusThreshold(cur - 5, true);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setFocusThreshold(50, true);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setFocusThreshold(99, true);
+    }
+  });
+}
+
+function syncConeSwitch() {
+  const mode = state.settings.sensitivity || 'low';
+  if (DOM.coneSwitch && typeof DOM.coneSwitch.querySelectorAll === 'function') {
+    const btns = DOM.coneSwitch.querySelectorAll('[data-cone]');
+    btns.forEach((btn) => {
+      const active = btn.getAttribute('data-cone') === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+  }
+  if (DOM.settingSensitivity) {
+    DOM.settingSensitivity.value = mode;
+  }
+}
+
+function setSensitivityCone(mode, notify = false) {
+  const valid = ['low', 'medium', 'high'].includes(mode) ? mode : 'low';
+  state.settings.sensitivity = valid;
+  syncConeSwitch();
+  saveSettings();
+  if (notify) {
+    showToast('info', 'Angle Cone Updated', `Tolerance set to ${valid.toUpperCase()} (${SENSITIVITY[valid]}°).`, 1800);
+  }
+}
+
+function syncAuxHardwareToggles() {
+  if (DOM.hwReadingBtn) {
+    const reading = Boolean(state.settings.readingMode);
+    DOM.hwReadingBtn.classList.toggle('active', reading);
+    DOM.hwReadingBtn.setAttribute('aria-pressed', reading ? 'true' : 'false');
+  }
+  if (DOM.hwSoundBtn) {
+    const sound = Boolean(state.settings.soundOn);
+    DOM.hwSoundBtn.classList.toggle('active', sound);
+    DOM.hwSoundBtn.setAttribute('aria-pressed', sound ? 'true' : 'false');
+  }
+  if (DOM.hwGoalVal) {
+    DOM.hwGoalVal.textContent = `${Number(state.settings.dailyGoal || 6).toFixed(1)}h`;
+  }
+  if (DOM.hwPipBtn) {
+    DOM.hwPipBtn.classList.toggle('hidden', !('documentPictureInPicture' in window));
+    DOM.hwPipBtn.classList.toggle('active', Boolean(state.pipWindow));
+  }
+}
+
+function adjustDailyGoal(deltaHours) {
+  const cur = Number(state.settings.dailyGoal) || 6;
+  const next = Math.max(0.5, Math.min(16, Math.round((cur + deltaHours) * 2) / 2));
+  if (next === cur) return;
+  state.settings.dailyGoal = next;
+  if (DOM.settingDailyGoal) DOM.settingDailyGoal.value = next;
+  if (DOM.dailyGoalDisplay) DOM.dailyGoalDisplay.textContent = `${next}h`;
+  syncAuxHardwareToggles();
+  saveSettings();
+  refreshDashboard();
+  showToast('info', 'Daily Target Updated', `Target set to ${next.toFixed(1)} hours.`, 1800);
+}
+
+let isRecalibratingLock = false;
+
+async function triggerRecalibrateFlow() {
+  if (state.calibration.isCalibrating) {
+    cancelCalibration();
+    return;
+  }
+  if (isRecalibratingLock) return;
+  isRecalibratingLock = true;
+  try {
+    if (!state.camera.faceLandmarker) {
+      await initFaceLandmarker();
+    }
+    if (!state.camera.stream) {
+      showToast('info', 'Starting Camera', 'Camera is needed to calibrate your neutral position.', 2500);
+      const ok = await startCamera();
+      if (!ok) return;
+      startDetectionLoop();
+    }
+    const ok = await runCalibration();
+    if (ok && state.session.active) {
+      setStatus(state.status);
+    }
+  } finally {
+    isRecalibratingLock = false;
+  }
 }
 
 function saveSettings() {
   try {
+    state.settings.settingsVersion = 2;
     localStorage.setItem('ayush-tracker-settings', JSON.stringify(state.settings));
   } catch (e) {
     console.warn('Could not save settings:', e);
@@ -579,34 +660,16 @@ function saveSettings() {
 function initSettingsListeners() {
   if (DOM.settingFocusThreshold) {
     DOM.settingFocusThreshold.addEventListener('input', (e) => {
-      const val = parseInt(e.target.value, 10);
-      state.settings.focusThreshold = Math.max(50, Math.min(99, val || 50));
-      if (DOM.settingFocusThresholdVal) {
-        DOM.settingFocusThresholdVal.textContent = state.settings.focusThreshold + '%';
-      }
-      if (DOM.liveFocusThresholdTag) {
-        DOM.liveFocusThresholdTag.textContent = `Cutoff: ${state.settings.focusThreshold}%`;
-      }
-      saveSettings();
+      setFocusThreshold(parseInt(e.target.value, 10), false);
     });
   }
 
   if (DOM.recalibrateBtn) {
-    DOM.recalibrateBtn.addEventListener('click', async () => {
-      closeSettings();
-      if (!state.camera.stream) {
-        showToast('info', 'Starting Camera', 'Camera is needed to calibrate your neutral position.');
-        const ok = await startCamera();
-        if (!ok) return;
-        startDetectionLoop();
-      }
-      await runCalibration();
-    });
+    DOM.recalibrateBtn.addEventListener('click', triggerRecalibrateFlow);
   }
 
   DOM.settingSensitivity.addEventListener('change', (e) => {
-    state.settings.sensitivity = e.target.value;
-    saveSettings();
+    setSensitivityCone(e.target.value, false);
   });
 
   DOM.settingLookawayTime.addEventListener('change', (e) => {
@@ -623,6 +686,7 @@ function initSettingsListeners() {
 
   DOM.settingReadingMode.addEventListener('change', (e) => {
     state.settings.readingMode = e.target.checked;
+    syncAuxHardwareToggles();
     saveSettings();
   });
 
@@ -630,11 +694,14 @@ function initSettingsListeners() {
     state.settings.dailyGoal = Math.max(0.5, Math.min(16, parseFloat(e.target.value) || 6));
     e.target.value = state.settings.dailyGoal;
     DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
+    syncAuxHardwareToggles();
     saveSettings();
+    refreshDashboard();
   });
 
   DOM.settingSound.addEventListener('change', (e) => {
     state.settings.soundOn = e.target.checked;
+    syncAuxHardwareToggles();
     saveSettings();
   });
 
@@ -649,13 +716,11 @@ function initSettingsListeners() {
     saveSettings();
   });
 
-  DOM.settingCameraPreview.addEventListener('change', (e) => {
-    state.settings.cameraPreview = e.target.checked;
-    if (DOM.cameraPreviewContainer) {
-      DOM.cameraPreviewContainer.classList.toggle('visible', e.target.checked);
-    }
-    saveSettings();
-  });
+  if (DOM.settingCameraPreview) {
+    DOM.settingCameraPreview.addEventListener('change', (e) => {
+      setCameraPreviewEnabled(e.target.checked, true);
+    });
+  }
 }
 
 
@@ -681,12 +746,12 @@ function applyTheme() {
   document.documentElement.setAttribute('data-theme', state.theme);
   if (DOM.themeToggle) {
     DOM.themeToggle.innerHTML = state.theme === 'dark'
-      ? `<svg class="tool-svg theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`
-      : `<svg class="tool-svg theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
+      ? `<svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" stroke="none"></path></svg>`
+      : `<svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"></path></svg>`;
   }
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
-    metaTheme.content = state.theme === 'dark' ? '#211F1C' : '#E0E7EC';
+    metaTheme.content = state.theme === 'dark' ? '#141513' : '#ECECE7';
   }
 
   if (state.pipWindow) {
@@ -740,14 +805,34 @@ function switchTab(tab) {
 // 6. SETTINGS PANEL — Open / Close
 // ═══════════════════════════════════════════════
 
+let lastFocusedBeforeSettings = null;
+
 function openSettings() {
+  lastFocusedBeforeSettings = (typeof document !== 'undefined' && document.activeElement) ? document.activeElement : null;
   DOM.settingsOverlay.classList.add('open');
+  DOM.settingsOverlay.setAttribute('aria-hidden', 'false');
   DOM.settingsPanel.classList.add('open');
+  DOM.settingsPanel.setAttribute('aria-hidden', 'false');
+  if (typeof DOM.settingsPanel.removeAttribute === 'function') {
+    DOM.settingsPanel.removeAttribute('inert');
+  }
+  if (DOM.settingsCloseBtn && typeof DOM.settingsCloseBtn.focus === 'function') {
+    DOM.settingsCloseBtn.focus();
+  }
 }
 
 function closeSettings() {
   DOM.settingsOverlay.classList.remove('open');
+  DOM.settingsOverlay.setAttribute('aria-hidden', 'true');
   DOM.settingsPanel.classList.remove('open');
+  DOM.settingsPanel.setAttribute('aria-hidden', 'true');
+  if (typeof DOM.settingsPanel.setAttribute === 'function') {
+    DOM.settingsPanel.setAttribute('inert', '');
+  }
+  if (lastFocusedBeforeSettings && typeof lastFocusedBeforeSettings.focus === 'function') {
+    lastFocusedBeforeSettings.focus();
+    lastFocusedBeforeSettings = null;
+  }
 }
 
 
@@ -760,12 +845,22 @@ function initPrivacyModal() {
   const accepted = params.has('skipPrivacy') || localStorage.getItem('ayush-tracker-privacy-accepted') || localStorage.getItem('ai-spectator-privacy-accepted');
   if (!accepted) {
     DOM.privacyModal.classList.add('active');
+    DOM.privacyModal.setAttribute('aria-hidden', 'false');
+    if (DOM.privacyAcceptBtn && typeof DOM.privacyAcceptBtn.focus === 'function') {
+      DOM.privacyAcceptBtn.focus();
+    }
+  } else {
+    DOM.privacyModal.setAttribute('aria-hidden', 'true');
   }
 }
 
 function acceptPrivacy() {
   localStorage.setItem('ayush-tracker-privacy-accepted', 'true');
   DOM.privacyModal.classList.remove('active');
+  DOM.privacyModal.setAttribute('aria-hidden', 'true');
+  if (DOM.startBtn && typeof DOM.startBtn.focus === 'function') {
+    DOM.startBtn.focus();
+  }
   if (state.settings.notificationsOn) requestNotificationPermission();
 }
 
@@ -828,32 +923,76 @@ async function requestNotificationPermission() {
 // 10. TOAST NOTIFICATIONS (in-app)
 // ═══════════════════════════════════════════════
 
-function showToast(type, title, message, duration = 5000) {
+const MAX_VISIBLE_TOASTS = 2;
+
+function showToast(type, title, message, duration = 3500) {
+  if (!DOM.toastContainer) return;
   const icons = {
     info: `<svg class="icon-svg-sm text-accent" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>`,
     success: `<svg class="icon-svg-sm text-success" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>`,
     warning: `<svg class="icon-svg-sm text-warning" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>`,
     error: `<svg class="icon-svg-sm text-danger" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>`
   };
+
+  // Replace existing toast with the same title so rapid dial/toggle changes don't stack duplicates
+  const existingChildren = Array.from(DOM.toastContainer.children || []);
+  for (const existing of existingChildren) {
+    if (existing.getAttribute && existing.getAttribute('data-toast-title') === String(title)) {
+      if (existing._autoHideTimer) clearTimeout(existing._autoHideTimer);
+      if (DOM.toastContainer.removeChild) DOM.toastContainer.removeChild(existing);
+      else if (existing.remove) existing.remove();
+    }
+  }
+
+  // Enforce max visible toast cap by evicting oldest toasts immediately
+  let evictGuard = 0;
+  while ((DOM.toastContainer.children || []).length >= MAX_VISIBLE_TOASTS && evictGuard++ < 10) {
+    const oldest = DOM.toastContainer.firstChild;
+    if (!oldest) break;
+    if (oldest._autoHideTimer) clearTimeout(oldest._autoHideTimer);
+    if (DOM.toastContainer.removeChild) DOM.toastContainer.removeChild(oldest);
+    else if (oldest.remove) oldest.remove();
+  }
+
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
+  toast.setAttribute('data-toast-title', String(title));
   toast.innerHTML = `
     <span class="toast-icon">${icons[type] || icons.info}</span>
     <div class="toast-content">
-      <div class="toast-title">${title}</div>
-      <div class="toast-message">${message}</div>
+      <div class="toast-title">${escapeHtml(title)}</div>
+      <div class="toast-message">${escapeHtml(message)}</div>
     </div>
     <button class="toast-close" aria-label="Close">✕</button>
   `;
   toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
   DOM.toastContainer.appendChild(toast);
-  if (duration > 0) setTimeout(() => dismissToast(toast), duration);
+  if (duration > 0) {
+    toast._autoHideTimer = setTimeout(() => dismissToast(toast), duration);
+    if (toast._autoHideTimer && typeof toast._autoHideTimer.unref === 'function') {
+      toast._autoHideTimer.unref();
+    }
+  }
 }
 
 function dismissToast(toast) {
-  if (!toast || !toast.parentNode) return;
+  if (!toast || (!toast.parentNode && (!DOM.toastContainer || !Array.from(DOM.toastContainer.children || []).includes(toast)))) return;
+  if (toast._autoHideTimer) {
+    clearTimeout(toast._autoHideTimer);
+    toast._autoHideTimer = null;
+  }
   toast.classList.add('removing');
-  toast.addEventListener('animationend', () => toast.remove());
+  // Always remove via timeout fallback even if CSS animation is absent or reduced-motion is enabled
+  const removeTimer = setTimeout(() => {
+    if (toast && toast.parentNode && toast.parentNode.removeChild) {
+      toast.parentNode.removeChild(toast);
+    } else if (toast && toast.remove) {
+      toast.remove();
+    }
+  }, 220);
+  if (removeTimer && typeof removeTimer.unref === 'function') {
+    removeTimer.unref();
+  }
 }
 
 
@@ -922,22 +1061,29 @@ function updateStartButtonLabel() {
 
 function setStatus(status, text) {
   state.status = status;
-  DOM.statusChip.setAttribute('data-status', status);
+  if (DOM.statusChip) DOM.statusChip.setAttribute('data-status', status);
+  if (DOM.homeInstrument) DOM.homeInstrument.setAttribute('data-status', status);
+  if (typeof document !== 'undefined' && document.body && typeof document.body.setAttribute === 'function') {
+    document.body.setAttribute('data-session-active', state.session?.active ? 'true' : 'false');
+  }
+  if (state.session?.active && DOM.secondaryAuditDrawer) {
+    DOM.secondaryAuditDrawer.open = false;
+  }
 
   const defaultTexts = {
     'idle': (state.session && (state.session.studyTime || state.session.accStudyMs || 0) > 0)
-      ? 'Ready to continue' : 'Ready to study',
-    'calibrating': 'Calibrating…',
-    'studying': 'Studying',
-    'looking-away': 'Paused: looking away',
-    'away': 'Paused: away',
-    'lid-closed': 'Paused: lid closed or sleep',
+      ? 'READY TO CONTINUE' : 'READY TO STUDY',
+    'calibrating': 'CALIBRATING…',
+    'studying': 'LOCKED IN',
+    'looking-away': 'PAUSED: LOOKING AWAY',
+    'away': 'PAUSED: AWAY',
+    'lid-closed': 'PAUSED: SLEEP',
   };
   const displayText = text || defaultTexts[status] || status;
   DOM.statusText.textContent = displayText;
 
-  DOM.liveStatusChip.setAttribute('data-status', status);
-  DOM.liveStatusText.textContent = displayText;
+  if (DOM.liveStatusChip) DOM.liveStatusChip.setAttribute('data-status', status);
+  if (DOM.liveStatusText) DOM.liveStatusText.textContent = displayText;
 
   // Timer display styling
   if (status === 'studying') {
@@ -946,8 +1092,10 @@ function setStatus(status, text) {
   } else if (['looking-away', 'away', 'lid-closed'].includes(status)) {
     DOM.timerDisplay.classList.remove('active');
     DOM.timerDisplay.classList.add('paused');
+    if (DOM.signalBars) DOM.signalBars.setAttribute('data-level', '1');
   } else {
     DOM.timerDisplay.classList.remove('active', 'paused');
+    if (DOM.signalBars) DOM.signalBars.setAttribute('data-level', '0');
   }
 
   updatePiP();
@@ -966,7 +1114,7 @@ function renderRecentEvents() {
     DOM.homeRecentEvents.innerHTML = '<li class="empty-recent-item">No events recorded yet</li>';
     return;
   }
-  DOM.homeRecentEvents.innerHTML = recentEventsLog.map(e => `<li>${e}</li>`).join('');
+  DOM.homeRecentEvents.innerHTML = recentEventsLog.map(e => `<li>${escapeHtml(e)}</li>`).join('');
 }
 
 function logEvent(msg) {
@@ -1015,84 +1163,43 @@ function updatePipeline(step, status, customText) {
   if (status === true) normStatus = 'active';
   if (status === false) normStatus = 'inactive';
 
+  const shortNames = {
+    Cam: 'Cam',
+    Model: 'Model',
+    Face: 'Face',
+    Focus: 'Screen',
+    Worker: 'Worker',
+  };
+  const baseLabel = shortNames[step] || step;
+
   switch (normStatus) {
     case 'active':
       el.classList.add('pipe-ok');
-      if (customText) {
-        el.textContent = customText;
-      } else {
-        const labels = {
-          Cam: '✅ Camera Active',
-          Model: '✅ Model Loaded',
-          Face: '✅ Face Detected',
-          Focus: '✅ Facing Screen',
-          Worker: '✅ Worker Active',
-        };
-        el.textContent = labels[step] || `✅ ${step} Active`;
-      }
+      el.textContent = baseLabel;
+      el.title = customText || `${baseLabel}: Active`;
       break;
 
     case 'loading':
-      if (customText) {
-        el.textContent = customText;
-      } else {
-        const labels = {
-          Cam: '⏳ Camera Starting…',
-          Model: '⏳ Model Loading…',
-          Face: '⏳ Face Searching…',
-          Focus: '⏳ Screen Checking…',
-          Worker: '⏳ Worker Starting…',
-        };
-        el.textContent = labels[step] || `⏳ ${step} Loading…`;
-      }
+      el.textContent = `${baseLabel}…`;
+      el.title = customText || `${baseLabel}: Initializing`;
       break;
 
     case 'warn':
       el.classList.add('pipe-warn');
-      if (customText) {
-        el.textContent = customText;
-      } else {
-        const labels = {
-          Cam: '⚠️ Camera Warning',
-          Model: '⚠️ Model Warning',
-          Face: '👀 No Face',
-          Focus: '👀 Focus Low',
-          Worker: '⚠️ Worker Stalled',
-        };
-        el.textContent = labels[step] || `⚠️ ${step}`;
-      }
+      el.textContent = baseLabel;
+      el.title = customText || `${baseLabel}: Warning`;
       break;
 
     case 'error':
       el.classList.add('pipe-err');
-      if (customText) {
-        el.textContent = customText;
-      } else {
-        const labels = {
-          Cam: '❌ Camera Error',
-          Model: '❌ Model Failed',
-          Face: '❌ Face Error',
-          Focus: '❌ Screen Lost',
-          Worker: '❌ Worker Error',
-        };
-        el.textContent = labels[step] || `❌ ${step} Error`;
-      }
+      el.textContent = baseLabel;
+      el.title = customText || `${baseLabel}: Error`;
       break;
 
     case 'inactive':
     default:
-      if (customText) {
-        el.textContent = customText;
-      } else {
-        const defaultLabels = {
-          Cam: 'Camera',
-          Model: 'Model',
-          Face: 'Face',
-          Focus: 'Screen',
-          Worker: 'Worker',
-        };
-        el.textContent = defaultLabels[step] || step;
-      }
+      el.textContent = baseLabel;
+      el.title = customText || `${baseLabel}: Standby`;
       break;
   }
 }
@@ -1230,12 +1337,15 @@ async function startCamera() {
     await DOM.cameraPreview.play();
 
     // Show camera indicator
-    DOM.cameraIndicator.classList.add('visible');
+    if (DOM.cameraIndicator) {
+      DOM.cameraIndicator.classList.add('visible');
+      const lbl = typeof DOM.cameraIndicator.querySelector === 'function'
+        ? DOM.cameraIndicator.querySelector('.camera-status-label') : null;
+      if (lbl) lbl.textContent = 'Sensor Active';
+    }
 
     // Show preview if enabled in settings
-    if (state.settings.cameraPreview && DOM.cameraPreviewContainer) {
-      DOM.cameraPreviewContainer.classList.add('visible');
-    }
+    setCameraPreviewEnabled(Boolean(state.settings.cameraPreview), false);
 
     // Listen for camera track ending (e.g. user unplugged camera, lid closed)
     state.camera.videoTrack.addEventListener('ended', handleCameraTrackEnded);
@@ -1269,8 +1379,15 @@ function stopCamera() {
   }
 
   if (DOM.cameraPreview) DOM.cameraPreview.srcObject = null;
-  if (DOM.cameraIndicator) DOM.cameraIndicator.classList.remove('visible');
-  if (DOM.cameraPreviewContainer) DOM.cameraPreviewContainer.classList.remove('visible');
+  if (DOM.cameraIndicator) {
+    DOM.cameraIndicator.classList.remove('visible');
+    const lbl = typeof DOM.cameraIndicator.querySelector === 'function'
+      ? DOM.cameraIndicator.querySelector('.camera-status-label') : null;
+    if (lbl) lbl.textContent = 'Sensor Standby';
+  }
+  if (DOM.liveCameraWrapper && !state.settings.cameraPreview) {
+    DOM.liveCameraWrapper.style.display = 'none';
+  }
 
   updatePipeline('Cam', 'inactive');
   console.log('📷 Camera stopped');
@@ -1357,8 +1474,7 @@ async function initFaceLandmarker() {
       runningMode: 'VIDEO',
       numFaces: 1,
       outputFaceBlendshapes: false,
-      // We need the transformation matrix for accurate head pose
-      outputFacialTransformationMatrixes: true,
+      outputFacialTransformationMatrixes: false,
     });
 
     console.log('✅ FaceLandmarker initialised');
@@ -1527,69 +1643,110 @@ function smoothHeadPose(reading) {
  *
  * @returns {Promise<boolean>} — true if calibration succeeded
  */
+function setCalibrationUiState(active, progress = 0) {
+  if (DOM.homeInstrument) {
+    DOM.homeInstrument.setAttribute('data-calibrating', active ? 'true' : 'false');
+  }
+  if (DOM.calibrationOverlay) {
+    DOM.calibrationOverlay.classList.toggle('active', active);
+    DOM.calibrationOverlay.setAttribute('aria-hidden', active ? 'false' : 'true');
+  }
+  if (DOM.calibrationArc) {
+    const CAL_CIRC = 804.25;
+    DOM.calibrationArc.style.strokeDashoffset = active
+      ? (CAL_CIRC * (1 - Math.max(0, Math.min(1, progress))))
+      : CAL_CIRC;
+  }
+}
+
+function cancelCalibration() {
+  if (!state.calibration.isCalibrating) return false;
+  if (state.calibration._intervalId) {
+    clearInterval(state.calibration._intervalId);
+    state.calibration._intervalId = null;
+  }
+  state.calibration.isCalibrating = false;
+  state.calibration.cancelled = true;
+  setCalibrationUiState(false, 0);
+  setStatus('idle');
+  if (typeof state.calibration._resolve === 'function') {
+    const res = state.calibration._resolve;
+    state.calibration._resolve = null;
+    res(false);
+  }
+  return true;
+}
+
 async function runCalibration() {
   return new Promise((resolve) => {
     state.calibration.isCalibrating = true;
+    state.calibration.cancelled = false;
+    state.calibration._resolve = resolve;
     state.calibration.samples = [];
-    state.calibration.startTime = Date.now();
+    state.calibration.startTime = getMonotonicNow();
 
     const DURATION_MS = 5000; // 5 seconds
 
-    // Reset progress and notice UI immediately
-    DOM.calibrationProgressBar.style.width = '0%';
-    DOM.calibrationCountdown.textContent = '5s remaining';
+    // Reset progress and notice UI immediately inside Optical Viewfinder
+    if (DOM.calibrationProgressBar) DOM.calibrationProgressBar.style.width = '0%';
+    if (DOM.calibrationCountdown) DOM.calibrationCountdown.textContent = '5s';
     if (DOM.calibrationSubstatus) {
-      DOM.calibrationSubstatus.textContent = 'Hold steady in your natural study posture…';
+      DOM.calibrationSubstatus.textContent = 'Hold steady facing screen…';
     }
 
-    // Show the calibration overlay
-    DOM.calibrationOverlay.classList.add('active');
+    setCalibrationUiState(true, 0);
+    if (DOM.calibrationCancelBtn && typeof DOM.calibrationCancelBtn.focus === 'function') {
+      DOM.calibrationCancelBtn.focus();
+    }
     setStatus('calibrating');
 
-    // We use the existing detection loop to collect samples.
-    // The detection loop checks state.calibration.isCalibrating
-    // and adds samples instead of running the state machine.
-
     const checkInterval = setInterval(() => {
-      const elapsed = Date.now() - state.calibration.startTime;
+      if (state.calibration.cancelled || !state.calibration.isCalibrating) {
+        clearInterval(checkInterval);
+        return;
+      }
+      const elapsed = getMonotonicNow() - state.calibration.startTime;
       const progress = Math.min(elapsed / DURATION_MS, 1);
 
-      // Update progress bar
-      DOM.calibrationProgressBar.style.width = (progress * 100) + '%';
+      if (DOM.calibrationProgressBar) {
+        DOM.calibrationProgressBar.style.width = (progress * 100) + '%';
+      }
+      setCalibrationUiState(true, progress);
+
       const remaining = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000));
-      DOM.calibrationCountdown.textContent = remaining + 's remaining';
+      if (DOM.calibrationCountdown) DOM.calibrationCountdown.textContent = remaining + 's';
 
       if (DOM.calibrationSubstatus) {
         if (remaining >= 4) {
-          DOM.calibrationSubstatus.textContent = 'Hold steady in your normal study posture…';
+          DOM.calibrationSubstatus.textContent = 'Hold steady in study posture…';
         } else if (remaining === 3) {
-          DOM.calibrationSubstatus.textContent = 'Calculating baseline pitch and yaw angles…';
+          DOM.calibrationSubstatus.textContent = 'Sampling neutral pitch & yaw…';
         } else if (remaining === 2) {
-          DOM.calibrationSubstatus.textContent = 'Calibrating neutral position for study timer…';
+          DOM.calibrationSubstatus.textContent = 'Aligning optical horizon…';
         } else if (remaining === 1) {
-          DOM.calibrationSubstatus.textContent = 'Finalizing neutral posture calculation…';
+          DOM.calibrationSubstatus.textContent = 'Finalizing baseline…';
         } else {
-          DOM.calibrationSubstatus.textContent = 'Calibration complete!';
+          DOM.calibrationSubstatus.textContent = 'Calibration locked';
         }
       }
 
       if (progress >= 1) {
         clearInterval(checkInterval);
+        state.calibration._intervalId = null;
 
-        // Calculate the average of all samples as the neutral angle
         const samples = state.calibration.samples;
 
         if (samples.length < 5) {
-          // Not enough samples — face wasn't detected reliably
-          DOM.calibrationOverlay.classList.remove('active');
+          setCalibrationUiState(false, 0);
           showToast('warning', 'Calibration failed',
-            'Could not detect your face consistently. Please sit in your study position facing the camera in good lighting and try again.');
+            'Could not detect your face consistently. Sit facing the camera in good lighting and try again.');
           state.calibration.isCalibrating = false;
+          setStatus('idle');
+          state.calibration._resolve = null;
           resolve(false);
           return;
         }
 
-        // Average all samples
         const sum = samples.reduce(
           (acc, s) => ({ yaw: acc.yaw + s.yaw, pitch: acc.pitch + s.pitch }),
           { yaw: 0, pitch: 0 }
@@ -1601,13 +1758,15 @@ async function runCalibration() {
           `pitch=${state.calibration.neutralPitch.toFixed(1)}°, ` +
           `(${samples.length} samples)`);
 
-        DOM.calibrationOverlay.classList.remove('active');
+        setCalibrationUiState(false, 0);
         state.calibration.isCalibrating = false;
+        state.calibration._resolve = null;
 
-        showToast('success', 'Calibration Done!', 'Baseline posture calculated. Your study timer is now active!');
+        showToast('success', 'Calibration Done', 'Neutral optical baseline locked.');
         resolve(true);
       }
-    }, 100); // Check every 100ms for smooth progress bar
+    }, 100);
+    state.calibration._intervalId = checkInterval;
   });
 }
 
@@ -1745,26 +1904,37 @@ function runDetection(wallNowOverride, monotonicOverride) {
   }
 
   // Draw canvas overlay if checked & main tab is active (saves CPU/GPU headroom in background)
-  if (DOM.livePreviewCb.checked && !document.hidden) {
+  if (DOM.livePreviewCb.checked && !document.hidden && DOM.liveCanvas && typeof DOM.liveCanvas.getContext === 'function') {
     const canvas = DOM.liveCanvas;
     const ctx = canvas.getContext('2d');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (ctx) {
+      const targetW = video.videoWidth || 640;
+      const targetH = video.videoHeight || 480;
+      if (canvas.width !== targetW) canvas.width = targetW;
+      if (canvas.height !== targetH) canvas.height = targetH;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (faceFound && results.facialTransformationMatrixes && results.facialTransformationMatrixes.length > 0) {
-      // Just draw a simple box using min/max of landmarks for the first face
-      const landmarks = results.faceLandmarks[0];
-      let minX = 1, minY = 1, maxX = 0, maxY = 0;
-      for (const p of landmarks) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
+      if (faceFound) {
+        const landmarks = results.faceLandmarks[0];
+        let minX = 1, minY = 1, maxX = 0, maxY = 0;
+        for (const p of landmarks) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        const meshColor = state.theme === 'dark' ? '#A3AD91' : '#258564';
+        ctx.strokeStyle = meshColor;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(minX * canvas.width, minY * canvas.height, (maxX - minX) * canvas.width, (maxY - minY) * canvas.height);
+
+        // Draw subtle landmark mesh points (sampling every 3rd point for clean visual & low overhead)
+        ctx.fillStyle = meshColor;
+        for (let i = 0; i < landmarks.length; i += 3) {
+          const p = landmarks[i];
+          ctx.fillRect(p.x * canvas.width - 1, p.y * canvas.height - 1, 2, 2);
+        }
       }
-      ctx.strokeStyle = state.theme === 'dark' ? '#A3AD91' : '#258564';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(minX * canvas.width, minY * canvas.height, (maxX - minX) * canvas.width, (maxY - minY) * canvas.height);
     }
   }
 
@@ -1781,7 +1951,7 @@ function runDetection(wallNowOverride, monotonicOverride) {
     state.headPose.yaw = smoothed.yaw;
     state.headPose.pitch = smoothed.pitch;
     state.headPose.faceDetected = true;
-    state.headPose.lastFaceSeen = Date.now();
+    state.headPose.lastFaceSeen = wallNow;
 
     DOM.liveYaw.textContent = Math.round(smoothed.yaw);
     DOM.livePitch.textContent = Math.round(smoothed.pitch);
@@ -1820,7 +1990,9 @@ function runDetection(wallNowOverride, monotonicOverride) {
 
   } else {
     state.headPose.faceDetected = false;
-    DOM.liveSinceFace.textContent = Math.round((Date.now() - state.headPose.lastFaceSeen) / 1000);
+    DOM.liveSinceFace.textContent = state.headPose.lastFaceSeen > 0
+      ? Math.max(0, Math.round((wallNow - state.headPose.lastFaceSeen) / 1000))
+      : '—';
 
     // No face — reset focus indicators
     updateFocusIndicator(null, 0);
@@ -1904,7 +2076,7 @@ function calculateBackdatedStudyTime(recordedStudyTime, pauseDelayMs) {
  */
 function isUserFacingScreen(pose) {
   const score = calculateFocusScore(pose);
-  const cutoff = state.settings.focusThreshold || 80;
+  const cutoff = state.settings.focusThreshold || 50;
   return score >= cutoff;
 }
 
@@ -1920,43 +2092,65 @@ function updateFocusIndicator(pose, focusScore) {
   const threshold = SENSITIVITY[state.settings.sensitivity] || 25;
   const neutralYaw = state.calibration.neutralYaw || 0;
   const neutralPitch = state.calibration.neutralPitch || 0;
-  const cutoff = state.settings.focusThreshold || 80;
-  const CIRCUMFERENCE = 314.16; // 2π × 50
+  const cutoff = state.settings.focusThreshold || 50;
+  const CIRCUMFERENCE = 804.25; // 2π × 128
 
   if (!pose) {
-    // No face — gauge at 0%
     DOM.focusArc.style.strokeDashoffset = CIRCUMFERENCE;
-    DOM.focusArc.style.stroke = 'var(--danger)';
+    DOM.focusArc.style.stroke = 'var(--signal-orange-hud)';
     DOM.focusPctVal.textContent = '0%';
-    DOM.focusPctVal.style.color = 'var(--danger)';
+    DOM.focusPctVal.style.color = 'var(--signal-orange-hud)';
     DOM.headPosDot.style.left = '50%';
     DOM.headPosDot.style.top = '50%';
-    DOM.headPosDot.style.background = 'var(--danger)';
-    DOM.headPosDot.style.opacity = '0.3';
+    DOM.headPosDot.style.background = 'var(--signal-orange-hud)';
+    DOM.headPosDot.style.opacity = '0.35';
+    if (DOM.horizonGroup) {
+      DOM.horizonGroup.style.transform = 'translateY(0px) rotate(0deg)';
+    }
+    if (DOM.signalBars) {
+      DOM.signalBars.setAttribute('data-level', '0');
+    }
     return;
   }
 
   const focusPct = typeof focusScore === 'number' ? focusScore : calculateFocusScore(pose);
 
-  // Arc fill
+  // Arc fill around Optical Viewfinder circumference
   const offset = CIRCUMFERENCE - (CIRCUMFERENCE * focusPct / 100);
   DOM.focusArc.style.strokeDashoffset = offset;
 
-  // Colour: green (>= cutoff) → warning/amber (>= 75%) → red (< 75%)
   const arcColour = focusPct >= cutoff
-    ? 'var(--success)'
-    : focusPct >= Math.max(60, cutoff - 15)
-      ? 'var(--warning)'
-      : 'var(--danger)';
+    ? 'var(--optical-sage-hud)'
+    : 'var(--signal-orange-hud)';
   DOM.focusArc.style.stroke = arcColour;
   DOM.focusPctVal.textContent = focusPct + '%';
   DOM.focusPctVal.style.color = arcColour;
 
-  // Head-position crosshair dot (50% = center of the grid)
-  const xPct = 50 + ((pose.yaw - neutralYaw) / threshold) * 45;
-  const yPct = 50 + ((pose.pitch - neutralPitch) / threshold) * 45;
-  DOM.headPosDot.style.left = Math.min(95, Math.max(5, xPct)) + '%';
-  DOM.headPosDot.style.top = Math.min(95, Math.max(5, yPct)) + '%';
+  // Signal bars (3 = strong lock, 2 = focused, 1 = off-cone)
+  if (DOM.signalBars) {
+    const level = focusPct >= 80 ? '3' : focusPct >= cutoff ? '2' : '1';
+    DOM.signalBars.setAttribute('data-level', level);
+  }
+
+  // Live percentage readout in Chronometer status bar while studying
+  if (state.status === 'studying' && DOM.statusText) {
+    DOM.statusText.textContent = `LOCKED IN (${focusPct}%)`;
+  }
+
+  // Artificial horizon responds to calibrated yaw & pitch
+  const yawDelta = pose.yaw - neutralYaw;
+  const pitchDelta = pose.pitch - neutralPitch;
+  if (DOM.horizonGroup) {
+    const rollDeg = Math.max(-18, Math.min(18, yawDelta * 0.45));
+    const pitchPx = Math.max(-28, Math.min(28, pitchDelta * 1.1));
+    DOM.horizonGroup.style.transform = `translateY(${pitchPx.toFixed(1)}px) rotate(${rollDeg.toFixed(1)}deg)`;
+  }
+
+  // Head-position crosshair dot (50% = center of the lens)
+  const xPct = 50 + (yawDelta / threshold) * 32;
+  const yPct = 50 + (pitchDelta / threshold) * 32;
+  DOM.headPosDot.style.left = Math.min(86, Math.max(14, xPct)) + '%';
+  DOM.headPosDot.style.top = Math.min(86, Math.max(14, yPct)) + '%';
   DOM.headPosDot.style.background = arcColour;
   DOM.headPosDot.style.opacity = '1';
 }
@@ -2283,12 +2477,14 @@ function updateSessionStatsDisplay() {
   const totalDistractions = (s.distractions?.lookAway || 0) + (s.distractions?.away || 0) + (s.distractions?.lidClosed || 0);
   if (DOM.statDistractions) DOM.statDistractions.textContent = totalDistractions;
   if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDistractions;
+  if (DOM.hudLiveDistractions) DOM.hudLiveDistractions.textContent = totalDistractions;
 
   // Focus % = study time / total tracking span (active session + paused time)
   const totalTrackingSpan = (s.sessionTime || 0) + (s.pausedTime || 0);
   const focusDisplay = formatFocusPercentage(s.studyTime, totalTrackingSpan);
   if (DOM.statFocus) DOM.statFocus.textContent = focusDisplay;
   if (DOM.homeFocus) DOM.homeFocus.textContent = focusDisplay;
+  if (DOM.hudLiveFocus) DOM.hudLiveFocus.textContent = focusDisplay;
 
   // Hero subtimes: Active today (sessionTime) and Paused time (pausedTime)
   if (DOM.statSessionTime) DOM.statSessionTime.textContent = formatTime(s.sessionTime || 0);
@@ -2319,6 +2515,16 @@ function startWorker() {
       // Unify worker tick monotonic timestamp onto main thread performance.now() origin
       // so pauses triggered by main-thread events share one monotonic timeline.
       const mainMono = getMonotonicNow();
+      // Keep CV inference alive at 1 Hz when tab is hidden (rAF is suspended in background tabs)
+      if (
+        typeof document !== 'undefined' &&
+        document.hidden &&
+        state.camera.isDetecting &&
+        state.camera.stream &&
+        state.camera.faceLandmarker
+      ) {
+        runDetection(e.data.timestamp, mainMono);
+      }
       handleTick({
         ...e.data,
         workerMonotonic: e.data.monotonic,
@@ -3146,8 +3352,13 @@ async function handleStart() {
   DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Starting…';
 
   // Unlock AudioContext on user gesture (browsers require this)
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  try {
+    const AudioCtx = (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext));
+    if (AudioCtx) {
+      if (!audioCtx) audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+  } catch (_) { }
 
   if (!state.camera.faceLandmarker) {
     DOM.startBtn.innerHTML = '<span class="btn-icon">⏳</span> Loading AI Model…';
@@ -4499,6 +4710,9 @@ function buildDashboardStats(sessions) {
   if (DOM.homeStudyTime) DOM.homeStudyTime.textContent = formatDuration(todayStudy);
   if (DOM.homeFocus) DOM.homeFocus.textContent = focusDisplay;
   if (DOM.homeDistractions) DOM.homeDistractions.textContent = totalDist;
+  if (DOM.hudLiveFocus) DOM.hudLiveFocus.textContent = focusDisplay;
+  if (DOM.hudLiveDistractions) DOM.hudLiveDistractions.textContent = totalDist;
+  if (DOM.hwGoalVal) DOM.hwGoalVal.textContent = `${Number(state.settings.dailyGoal || 6).toFixed(1)}h`;
 
   // Calculate Streak
   let streak = 0;
@@ -4523,20 +4737,54 @@ function buildDashboardStats(sessions) {
     }
   }
 
-  if (DOM.streakBadge) DOM.streakBadge.textContent = `🔥 ${streak} Day Streak`;
-  if (DOM.homeStreakBadge) DOM.homeStreakBadge.textContent = `🔥 ${streak} Day Streak`;
+  const updateStreakBadgeText = (badgeEl, labelText) => {
+    if (!badgeEl) return;
+    const labelSpan = typeof badgeEl.querySelector === 'function' ? badgeEl.querySelector('span') : null;
+    if (labelSpan) {
+      labelSpan.textContent = labelText;
+    } else {
+      badgeEl.textContent = labelText;
+    }
+  };
+  const streakText = `${streak} day${streak === 1 ? '' : 's'}`;
+  updateStreakBadgeText(DOM.streakBadge, `${streakText} streak`);
+  updateStreakBadgeText(DOM.homeStreakBadge, streakText);
 
   // Daily goal progress on Home
   const goalPct = goalMs > 0 ? Math.min(100, Math.round((todayStudy / goalMs) * 100)) : 0;
   if (DOM.goalProgressText) {
-    DOM.goalProgressText.textContent = `${(todayStudy / 3600000).toFixed(1)}h of ${state.settings.dailyGoal}h (${goalPct}%)`;
+    DOM.goalProgressText.textContent = `${(todayStudy / 3600000).toFixed(1)}h / ${Number(state.settings.dailyGoal).toFixed(1)}h`;
+  }
+  if (DOM.goalPctBadge) {
+    DOM.goalPctBadge.textContent = `${goalPct}%`;
   }
   if (DOM.goalProgressBar) {
     DOM.goalProgressBar.style.width = goalPct + '%';
   }
+  renderGoalSegments(goalPct);
 
   // Render recent sessions on Home
   renderRecentSessions(sessions);
+}
+
+function renderGoalSegments(goalPct = 0) {
+  if (!DOM.goalSegments || typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+  const TOTAL_SEGMENTS = 20;
+  const filledCount = Math.round((Math.max(0, Math.min(100, goalPct)) / 100) * TOTAL_SEGMENTS);
+  if (DOM.goalSegments.children.length !== TOTAL_SEGMENTS) {
+    DOM.goalSegments.innerHTML = '';
+    for (let i = 0; i < TOTAL_SEGMENTS; i++) {
+      const seg = document.createElement('span');
+      seg.className = 'goal-seg';
+      DOM.goalSegments.appendChild(seg);
+    }
+  }
+  for (let i = 0; i < TOTAL_SEGMENTS; i++) {
+    const seg = DOM.goalSegments.children[i];
+    if (seg && seg.classList) {
+      seg.classList.toggle('filled', i < filledCount);
+    }
+  }
 }
 
 function renderRecentSessions(sessions) {
@@ -4695,6 +4943,7 @@ async function togglePiP() {
     state.pipWindow.close();
     state.pipWindow = null;
     if (DOM.pipBtn) DOM.pipBtn.classList.remove('pip-active');
+    if (DOM.hwPipBtn) DOM.hwPipBtn.classList.remove('active');
     return;
   }
 
@@ -4704,6 +4953,7 @@ async function togglePiP() {
       height: 86,
     });
     if (DOM.pipBtn) DOM.pipBtn.classList.add('pip-active');
+    if (DOM.hwPipBtn) DOM.hwPipBtn.classList.add('active');
 
     // Copy parent document stylesheets into the PiP window
     [...document.styleSheets].forEach((styleSheet) => {
@@ -4732,8 +4982,26 @@ async function togglePiP() {
       html.pip-html, body.pip-body, body {
         width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
         container-type: size; container-name: piproot;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #211F1C; color: #F0ECE3; user-select: none;
+        font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        --pip-bg: #161614;
+        --pip-surface: #1E1F1C;
+        --pip-text: #F2F1EC;
+        --pip-muted: #A6A69E;
+        --pip-border: #2B2C28;
+        --pip-present: #57B889;
+        --pip-warn: #E86233;
+        --pip-away: #E86233;
+        background: var(--pip-bg); color: var(--pip-text); user-select: none;
+      }
+      html[data-theme="light"], html[data-theme="light"] body.pip-body {
+        --pip-bg: #E1E1DB;
+        --pip-surface: #161614;
+        --pip-text: #F2F1EC;
+        --pip-muted: #A6A69E;
+        --pip-border: #BFBDB5;
+        --pip-present: #57B889;
+        --pip-warn: #E86233;
+        --pip-away: #E86233;
       }
       .pip-root {
         width: 100%; height: 100vh;
@@ -4742,47 +5010,52 @@ async function togglePiP() {
         gap: clamp(2px, 2.5cqh, 10px);
         position: relative;
         transition: background 0.25s ease, border-color 0.25s ease;
-        border: clamp(1px, 0.6cqmin, 3px) solid #413C33; box-sizing: border-box; overflow: hidden;
+        background: var(--pip-bg);
+        border: clamp(1px, 0.6cqmin, 3px) solid var(--pip-border); box-sizing: border-box; overflow: hidden;
       }
       .pip-root[data-status="studying"] {
-        background: radial-gradient(circle at center, #322F29 0%, #1E1C19 100%);
-        border-color: #A3AD91;
+        background: var(--pip-surface);
+        border-color: var(--pip-present);
       }
-      .pip-root[data-status="studying"] .pip-timer { color: #A3AD91; }
+      .pip-root[data-status="studying"] .pip-timer { color: var(--pip-present); }
       .pip-root[data-status="studying"] .pip-badge {
-        background: rgba(163, 173, 145, 0.18); color: #A3AD91; border: 1px solid rgba(163, 173, 145, 0.35);
+        background: rgba(37, 133, 100, 0.14); color: var(--pip-present); border: 1px solid var(--pip-present);
       }
-      .pip-root[data-status="studying"] .pip-badge-dot { background: #A3AD91; }
+      .pip-root[data-status="studying"] .pip-badge-dot { background: var(--pip-present); }
       .pip-root[data-status="looking-away"] {
-        background: radial-gradient(circle at center, #382D20 0%, #1E1710 100%);
-        border-color: #D49B4B;
+        background: var(--pip-surface);
+        border-color: var(--pip-warn);
       }
-      .pip-root[data-status="looking-away"] .pip-timer { color: #D49B4B; }
+      .pip-root[data-status="looking-away"] .pip-timer { color: var(--pip-warn); }
       .pip-root[data-status="looking-away"] .pip-badge {
-        background: #D49B4B; color: #211F1C; font-weight: 700; border: 1px solid #E5AC5C;
+        background: var(--pip-warn); color: #FFFFFF; font-weight: 700; border: 1px solid var(--pip-warn);
       }
-      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #211F1C; }
+      .pip-root[data-status="looking-away"] .pip-badge-dot { background: #FFFFFF; }
       .pip-root[data-status="looking-away"] .pip-alert-banner {
-        display: flex !important; background: rgba(212, 155, 75, 0.22); color: #E5AC5C; border-color: rgba(212, 155, 75, 0.45);
+        display: flex !important; background: rgba(180, 83, 9, 0.16); color: var(--pip-warn); border-color: var(--pip-warn);
       }
       .pip-root[data-status="away"], .pip-root[data-status="lid-closed"] {
-        background: radial-gradient(circle at center, #3A261E 0%, #1E130E 100%);
-        border-color: #C78B70;
+        background: var(--pip-surface);
+        border-color: var(--pip-away);
       }
-      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: #C78B70; }
+      .pip-root[data-status="away"] .pip-timer, .pip-root[data-status="lid-closed"] .pip-timer { color: var(--pip-away); }
       .pip-root[data-status="away"] .pip-badge, .pip-root[data-status="lid-closed"] .pip-badge {
-        background: #C78B70; color: #ffffff; font-weight: 700; border: 1px solid #D89E85;
+        background: var(--pip-away); color: #FFFFFF; font-weight: 700; border: 1px solid var(--pip-away);
       }
-      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot { background: #ffffff; }
+      html[data-theme="dark"] .pip-root[data-status="away"] .pip-badge,
+      html[data-theme="dark"] .pip-root[data-status="lid-closed"] .pip-badge {
+        color: #1D1B18;
+      }
+      .pip-root[data-status="away"] .pip-badge-dot, .pip-root[data-status="lid-closed"] .pip-badge-dot { background: currentColor; }
       .pip-root[data-status="away"] .pip-alert-banner, .pip-root[data-status="lid-closed"] .pip-alert-banner {
-        display: flex !important; background: rgba(199, 139, 112, 0.22); color: #D89E85; border-color: rgba(199, 139, 112, 0.45);
+        display: flex !important; background: rgba(201, 69, 72, 0.14); color: var(--pip-away); border-color: var(--pip-away);
       }
       .pip-root[data-status="idle"], .pip-root[data-status="calibrating"] {
-        background: #211F1C; border-color: #413C33;
+        background: var(--pip-bg); border-color: var(--pip-border);
       }
-      .pip-root[data-status="idle"] .pip-timer { color: #AAA397; }
+      .pip-root[data-status="idle"] .pip-timer { color: var(--pip-muted); }
       .pip-root[data-status="idle"] .pip-badge {
-        background: #322F29; color: #AAA397; border: 1px solid #413C33;
+        background: var(--pip-surface); color: var(--pip-muted); border: 1px solid var(--pip-border);
       }
       .pip-header {
         width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 6px;
@@ -4797,11 +5070,11 @@ async function togglePiP() {
         width: clamp(4px, 2.5cqmin, 8px); height: clamp(4px, 2.5cqmin, 8px); border-radius: 50%; flex-shrink: 0;
       }
       .pip-focus-tag {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); color: #94a3b8; font-weight: 600; white-space: nowrap;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: clamp(0.55rem, min(14cqh, 4.2cqw), 0.95rem); color: var(--pip-muted); font-weight: 600; white-space: nowrap;
       }
       .pip-timer {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: clamp(1.2rem, min(48cqh, 17.2cqw), 5.5rem); font-weight: 700; letter-spacing: -0.03em;
         line-height: 1; margin: 0; flex: 1; display: flex; align-items: center; justify-content: center;
         text-align: center; white-space: nowrap; transition: color 0.2s ease;
@@ -4849,17 +5122,17 @@ async function togglePiP() {
     state.pipWindow.document.head.appendChild(customStyle);
 
     state.pipWindow.document.body.innerHTML = `
-      <div id="pip-container" class="pip-root" data-status="${state.status}">
+      <div id="pip-container" class="pip-root" data-status="${escapeHtml(state.status)}">
         <div class="pip-header">
-          <div id="pip-status-chip" class="pip-badge" data-status="${state.status}">
+          <div id="pip-status-chip" class="pip-badge" data-status="${escapeHtml(state.status)}">
             <span class="pip-badge-dot"></span>
-            <span id="pip-status-text">${DOM.statusText.textContent}</span>
+            <span id="pip-status-text">${escapeHtml(DOM.statusText.textContent)}</span>
           </div>
           <div id="pip-focus-tag" class="pip-focus-tag">Focus: —</div>
         </div>
 
-        <div id="pip-timer" class="pip-timer" data-status="${state.status}">
-          ${DOM.timerDisplay.textContent}
+        <div id="pip-timer" class="pip-timer" data-status="${escapeHtml(state.status)}">
+          ${escapeHtml(DOM.timerDisplay.textContent)}
         </div>
 
         <div id="pip-alert-banner" class="pip-alert-banner">
@@ -4892,6 +5165,7 @@ async function togglePiP() {
     state.pipWindow.addEventListener('pagehide', () => {
       state.pipWindow = null;
       if (DOM.pipBtn) DOM.pipBtn.classList.remove('pip-active');
+      if (DOM.hwPipBtn) DOM.hwPipBtn.classList.remove('active');
     });
 
     updatePiP();
@@ -5166,10 +5440,60 @@ function attachEventListeners() {
   if (DOM.settingsCloseBtn) DOM.settingsCloseBtn.addEventListener('click', closeSettings);
   if (DOM.settingsOverlay) DOM.settingsOverlay.addEventListener('click', closeSettings);
 
-  // Live preview toggle
+  // Live preview toggle (synced with Settings Drawer)
   DOM.livePreviewCb.addEventListener('change', (e) => {
-    DOM.liveCameraWrapper.style.display = e.target.checked ? 'block' : 'none';
+    setCameraPreviewEnabled(e.target.checked, true);
   });
+
+  // Calibration cancel
+  if (DOM.calibrationCancelBtn) {
+    DOM.calibrationCancelBtn.addEventListener('click', cancelCalibration);
+  }
+
+  // Viewfinder hardware controls
+  if (DOM.calHwBtn) {
+    DOM.calHwBtn.addEventListener('click', triggerRecalibrateFlow);
+  }
+  if (DOM.thresholdDial) {
+    attachThresholdDialControls(DOM.thresholdDial);
+  }
+  if (DOM.coneSwitch) {
+    DOM.coneSwitch.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-cone]');
+      if (!btn) return;
+      setSensitivityCone(btn.getAttribute('data-cone'), true);
+    });
+  }
+  if (DOM.hwReadingBtn) {
+    DOM.hwReadingBtn.addEventListener('click', () => {
+      state.settings.readingMode = !state.settings.readingMode;
+      if (DOM.settingReadingMode) DOM.settingReadingMode.checked = state.settings.readingMode;
+      syncAuxHardwareToggles();
+      saveSettings();
+      showToast('info', 'Notes Mode Updated', state.settings.readingMode ? 'Downward note reading allowed.' : 'Strict forward posture restored.', 1800);
+    });
+  }
+  if (DOM.hwSoundBtn) {
+    DOM.hwSoundBtn.addEventListener('click', () => {
+      state.settings.soundOn = !state.settings.soundOn;
+      if (DOM.settingSound) DOM.settingSound.checked = state.settings.soundOn;
+      syncAuxHardwareToggles();
+      saveSettings();
+      showToast('info', 'Audio Chimes Updated', state.settings.soundOn ? 'Alert chimes enabled.' : 'Audio chimes muted.', 1800);
+    });
+  }
+  if (DOM.hwPipBtn) {
+    DOM.hwPipBtn.addEventListener('click', togglePiP);
+  }
+  if (DOM.goalDecBtn) {
+    DOM.goalDecBtn.addEventListener('click', () => adjustDailyGoal(-0.5));
+  }
+  if (DOM.goalIncBtn) {
+    DOM.goalIncBtn.addEventListener('click', () => adjustDailyGoal(0.5));
+  }
+  if (DOM.shortcutAnalyticsBtn) {
+    DOM.shortcutAnalyticsBtn.addEventListener('click', () => switchTab('history'));
+  }
 
   // Timer controls
   DOM.startBtn.addEventListener('click', handleStart);
@@ -5186,29 +5510,16 @@ function attachEventListeners() {
   // PiP button
   DOM.pipBtn.addEventListener('click', togglePiP);
 
-  // Keyboard shortcut: Escape to close settings
+  // Keyboard shortcut: Escape to close settings or cancel calibration
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeSettings();
+    if (e.key === 'Escape') {
+      if (state.calibration.isCalibrating) {
+        cancelCalibration();
+      } else if (DOM.settingsPanel && DOM.settingsPanel.classList.contains('open')) {
+        closeSettings();
+      }
+    }
   });
-
-  // ── Keyboard & mouse as secondary signals ──
-  // These only prevent false "away" when the camera briefly fails.
-  // They NEVER keep the timer running when the webcam says user is gone.
-  document.addEventListener('keydown', handleUserActivity);
-  document.addEventListener('mousemove', handleUserActivity);
-  document.addEventListener('click', handleUserActivity);
-}
-
-/**
- * Track keyboard/mouse activity.
- * This is a SECONDARY signal only — it can prevent a false "away"
- * when the camera briefly loses the face, but it cannot override
- * the camera saying the user is looking away.
- */
-let lastActivityTimestamp = 0;
-
-function handleUserActivity() {
-  lastActivityTimestamp = Date.now();
 }
 
 /**
@@ -5239,15 +5550,6 @@ let initPromise = null;
 
 function init() {
   if (initPromise) return initPromise;
-
-  // Purge any old service worker caches immediately
-  if (typeof caches !== 'undefined') {
-    caches.keys().then((keys) => {
-      keys.forEach((k) => {
-        if (k !== 'ayush-tracker-v11') caches.delete(k);
-      });
-    }).catch(() => { });
-  }
 
   // Load today's accumulated progress immediately from localStorage
   loadTodayState();
@@ -5294,10 +5596,16 @@ function init() {
   initTheme();
   loadSettings();
   initSettingsListeners();
+  renderGoalSegments(0);
   initPrivacyModal();
   initInstallPrompt();
   initPiP();
   attachEventListeners();
+  if (typeof window !== 'undefined' && window.location && typeof URLSearchParams !== 'undefined') {
+    if (new URLSearchParams(window.location.search).get('view') === 'analytics') {
+      switchTab('history');
+    }
+  }
   registerServiceWorker();
   if (DOM.dailyGoalDisplay) DOM.dailyGoalDisplay.textContent = state.settings.dailyGoal + 'h';
 
@@ -5348,7 +5656,7 @@ function init() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('tab') === 'history') switchTab('history');
       if (urlParams.has('settings')) openSettings();
-      if (urlParams.has('calibrate') && DOM.calibrationOverlay) DOM.calibrationOverlay.classList.add('active');
+      if (urlParams.has('calibrate')) setCalibrationUiState(true, 0.35);
     } catch (_) { }
   }
 
@@ -5373,6 +5681,19 @@ if (typeof module !== 'undefined' && module.exports) {
     formatDuration,
     formatFocusPercentage,
     getLocalDateString,
+    loadSettings,
+    saveSettings,
+    setFocusThreshold,
+    setSensitivityCone,
+    adjustDailyGoal,
+    setCameraPreviewEnabled,
+    showToast,
+    dismissToast,
+    openSettings,
+    closeSettings,
+    cancelCalibration,
+    escapeHtml,
+    calculateHeadPose,
     calculateFocusScore,
     calculateYaw,
     calculatePitch,

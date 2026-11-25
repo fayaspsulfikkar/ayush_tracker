@@ -1,24 +1,23 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
-  <!-- ====== Meta ====== -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="description" content="Ayush_Tracker — Premium in-browser computer-vision productivity and study time tracker. Tactile Neumorphic (Soft UI) interface with local privacy.">
-  <meta name="theme-color" content="#E0E7EC">
+  <meta name="description" content="Ayush_Tracker — Chrono-Optic tactile precision focus instrument using local computer vision.">
+  <meta name="theme-color" content="#ECECE7">
 
-  <title>Ayush_Tracker — Study Focus</title>
+  <title>AYUSH_TRACKER — Chrono-Optic Focus Instrument</title>
 
-  <!-- ====== PWA & Favicon ====== -->
+  <!-- PWA & Favicon -->
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
 
-  <!-- ====== Typography & Local Styles ====== -->
+  <!-- Local Styles & Typography -->
   <link rel="stylesheet" href="styles.css">
 
-  <!-- Immediate Theme Application (Prevents Theme Flash & Transition Lag) -->
+  <!-- Immediate Theme Application -->
   <script>
     (function() {
       try {
@@ -28,181 +27,134 @@
         var theme = (p === 'dark' || p === 'light') ? p : (s === 'dark' || s === 'light') ? s : 'light';
         document.documentElement.setAttribute('data-theme', theme);
         var meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute('content', theme === 'dark' ? '#211F1C' : '#E0E7EC');
+        if (meta) meta.setAttribute('content', theme === 'dark' ? '#141513' : '#ECECE7');
       } catch (e) {}
     })();
   </script>
 </head>
-<body>
-
+<body data-session-active="false">
 
   <!-- ============================================
-       PRIVACY MODAL — High-grade frosted glass
+       PRIVACY MODAL — Instrument Authorization
        ============================================ -->
-  <div id="privacy-modal" class="modal-overlay">
-    <div class="modal glass-elevated" role="dialog" aria-labelledby="privacy-title">
-      <div class="modal-glow" aria-hidden="true"></div>
-      <div class="modal-header-icon">
-        <svg class="icon-svg-lg text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
+  <div id="privacy-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal instrument-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+      <div class="modal-top-bar">
+        <div class="modal-header-row">
+          <svg class="icon-svg-md text-sage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <div>
+            <h2 id="privacy-title" class="modal-title">Local Optical Privacy</h2>
+            <p class="modal-subtitle">Your webcam stream never leaves this device.</p>
+          </div>
+        </div>
       </div>
-      <h2 id="privacy-title" class="modal-title">Zero-Knowledge Privacy</h2>
-      <p class="modal-subtitle">Your camera stream never leaves your physical device.</p>
-      
+
       <div class="modal-text">
         <ul class="privacy-feature-list">
           <li>
-            <svg class="feature-icon text-success" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="feature-icon text-sage" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
             </svg>
             <div>
-              <strong>100% Local Processing</strong>
-              <p>Frames are evaluated frame-by-frame via client-side WebAssembly, then immediately discarded from RAM.</p>
+              <strong>100% On-Device WebAssembly</strong>
+              <p>Video frames are analyzed locally in RAM for head orientation and discarded immediately.</p>
             </div>
           </li>
           <li>
-            <svg class="feature-icon text-success" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="feature-icon text-sage" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
             </svg>
             <div>
-              <strong>Never Recorded or Transmitted</strong>
-              <p>No video or audio feeds are recorded, uploaded, or exposed to external APIs or remote servers.</p>
+              <strong>Zero Recording or Network Transmission</strong>
+              <p>No images, video, or audio leave your browser or touch external servers.</p>
             </div>
           </li>
           <li>
-            <svg class="feature-icon text-success" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="feature-icon text-sage" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
             </svg>
             <div>
-              <strong>Self-Contained Storage</strong>
-              <p>Only session timestamps and aggregate focus scores persist inside your browser's private IndexedDB.</p>
+              <strong>Private Browser Storage</strong>
+              <p>Only study durations and aggregate focus scores persist inside local IndexedDB.</p>
             </div>
           </li>
         </ul>
       </div>
+
       <div class="modal-actions">
-        <button id="privacy-accept-btn" class="btn btn-primary btn-glow">
-          <span>Authorize Local Vision & Start</span>
-          <svg class="btn-arrow" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
-          </svg>
+        <button id="privacy-accept-btn" class="btn btn-signal" type="button">
+          <span>Authorize Local Vision &amp; Start</span>
         </button>
       </div>
     </div>
   </div>
 
   <!-- ============================================
-       CALIBRATION OVERLAY — Precision 5-second HUD
-       ============================================ -->
-  <div id="calibration-overlay" class="calibration-overlay">
-    <div class="calibration-card glass-elevated">
-      <div class="calibration-crosshair" aria-hidden="true">
-        <div class="calibration-ring"></div>
-        <div class="calibration-pulse"></div>
-        <svg class="calibration-reticle" viewBox="0 0 100 100" fill="none" stroke="currentColor">
-          <circle cx="50" cy="50" r="45" stroke-width="1.5" stroke-dasharray="4 6"/>
-          <line x1="50" y1="5" x2="50" y2="22" stroke-width="2"/>
-          <line x1="50" y1="78" x2="50" y2="95" stroke-width="2"/>
-          <line x1="5" y1="50" x2="22" y2="50" stroke-width="2"/>
-          <line x1="78" y1="50" x2="95" y2="50" stroke-width="2"/>
-        </svg>
-      </div>
-
-      <h2 class="calibration-title">Neutral Pose Calibration</h2>
-
-      <div class="calibration-notice">
-        <div class="calibration-notice-header">
-          <svg class="icon-svg-sm text-warning" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-          </svg>
-          <span class="calibration-notice-title">Ergonomic Anchor Notice</span>
-        </div>
-        <p class="calibration-notice-body">
-          Sit comfortably facing your screen in your normal studying posture. Your exact head orientation is established as the zero-deviation baseline.
-        </p>
-      </div>
-
-      <div class="calibration-progress-wrapper">
-        <div class="calibration-progress">
-          <div id="calibration-progress-bar" class="calibration-progress-bar"></div>
-        </div>
-        <div class="calibration-meta">
-          <span id="calibration-countdown" class="calibration-countdown font-mono">5.0s remaining</span>
-          <span id="calibration-substatus" class="calibration-substatus">Hold steady facing screen…</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============================================
-       MAIN APP SHELL
+       MAIN APPLICATION SHELL
        ============================================ -->
   <div id="app" class="app-container">
 
-    <!-- ====== Header Navigation ====== -->
-    <header class="app-header glass-nav">
+    <!-- Global Physical Control Bar -->
+    <header class="app-header">
       <div class="header-left">
         <div class="logo">
-          <div class="logo-mark">
-            <svg class="logo-svg" viewBox="0 0 28 28" fill="none">
-              <rect x="2" y="2" width="24" height="24" rx="8" fill="#DE5B5E"/>
-              <circle cx="14" cy="14" r="5" stroke="#FFFFFF" stroke-width="2"/>
-              <circle cx="14" cy="14" r="2" fill="#FFFFFF"/>
-              <path d="M14 4V7 M14 21V24 M4 14H7 M21 14H24" stroke="rgba(255,255,255,0.75)" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <div class="logo-text-group">
-            <span class="logo-title">AYUSH<span class="logo-sub">_TRACKER</span></span>
-            <span class="logo-badge">FOCUS AI</span>
-          </div>
+          <svg class="logo-target-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="12" r="4.5"></circle>
+            <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>
+            <line x1="12" y1="1" x2="12" y2="5"></line>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="1" y1="12" x2="5" y2="12"></line>
+            <line x1="19" y1="12" x2="23" y2="12"></line>
+          </svg>
+          <span class="logo-title">AYUSH_TRACKER</span>
         </div>
+        <span class="header-divider" aria-hidden="true"></span>
       </div>
 
-      <!-- Center Segmented Pill Navigation -->
-      <nav class="app-nav segmented-glass" aria-label="Main navigation">
-        <button id="nav-home" class="nav-btn active" data-tab="home" aria-selected="true">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
-          </svg>
+      <!-- Center Recessed Tab Switcher -->
+      <nav class="app-nav hardware-tabs" aria-label="Main navigation">
+        <button id="nav-home" class="nav-btn active" data-tab="home" aria-selected="true" type="button">
+          <span class="nav-led" aria-hidden="true"></span>
           <span>Tracker</span>
         </button>
-        <button id="nav-history" class="nav-btn" data-tab="history" aria-selected="false">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+        <button id="nav-history" class="nav-btn" data-tab="history" aria-selected="false" type="button">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <line x1="5" y1="15" x2="5" y2="10"></line>
+            <line x1="10" y1="15" x2="10" y2="5"></line>
+            <line x1="15" y1="15" x2="15" y2="8"></line>
           </svg>
           <span>Analytics</span>
         </button>
       </nav>
 
-      <!-- Right Header Utility Controls -->
+      <!-- Right Physical Instrument Controls -->
       <div class="header-controls">
-        <!-- Live Camera Indicator Pill -->
         <div id="camera-indicator" class="camera-indicator" title="Optical sensor status">
-          <span class="camera-pulse-dot"></span>
-          <span class="camera-status-label">Camera Active</span>
+          <span class="camera-pulse-dot" aria-hidden="true"></span>
+          <span class="camera-status-label">Sensor Standby</span>
         </div>
 
-        <!-- Picture-in-Picture Control -->
-        <button id="pip-btn" class="header-tool-btn pip-btn" title="Open Floating HUD (Picture-in-Picture)" aria-label="Open mini window">
-          <svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-            <rect x="12" y="9" width="8" height="6" rx="1" ry="1"></rect>
-            <polyline points="10 13 8 13 8 11"></polyline>
+        <button id="pip-btn" class="header-tool-btn pip-btn" title="Open Floating Mini Chronometer (PiP)" aria-label="Open mini window" type="button">
+          <svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+            <rect x="12" y="11" width="7" height="6" rx="1"></rect>
+          </svg>
+          <span class="tool-label">PiP</span>
+        </button>
+
+        <button id="theme-toggle" class="header-tool-btn header-icon-only" title="Toggle Brushed Chalk / Anodized Dark" aria-label="Toggle light/dark theme" type="button">
+          <svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="8"></circle>
+            <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"></path>
           </svg>
         </button>
 
-        <!-- Theme Toggle Switcher -->
-        <button id="theme-toggle" class="header-tool-btn" title="Toggle Light / Dark Surface" aria-label="Toggle light/dark theme">
-          <svg class="tool-svg theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-          </svg>
-        </button>
-
-        <!-- Settings Slide-out Trigger -->
-        <button id="nav-settings" class="header-tool-btn settings-trigger" aria-label="Open tracking settings" title="System Settings">
-          <svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button id="nav-settings" class="header-tool-btn header-icon-only settings-trigger" aria-label="Open tracking settings" title="Instrument Preferences" type="button">
+          <svg class="tool-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
@@ -210,452 +162,518 @@
       </div>
     </header>
 
-    <!-- ====== Main Application Body ====== -->
     <main class="app-main">
 
-      <!-- PWA Install Banner -->
-      <div id="install-prompt" class="install-prompt glass-card">
+      <!-- PWA Install Strip -->
+      <div id="install-prompt" class="install-prompt">
         <div class="install-left">
-          <div class="install-badge-icon" aria-hidden="true">
-            <svg class="icon-svg-md text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-          </div>
-          <div class="install-text-group install-prompt-text">
-            <div class="install-title-row">
-              <span class="install-prompt-title">Install Ayush_Tracker Native App</span>
-              <span class="install-pill-tag">STANDALONE</span>
-            </div>
-            <span class="install-prompt-desc">Hardware-accelerated webcam telemetry, instant background launch, and offline tracking.</span>
+          <svg class="icon-svg-sm text-orange" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <div class="install-text-group">
+            <span class="install-prompt-title">Install Ayush_Tracker Desktop App</span>
+            <span class="install-prompt-desc">Standalone offline window with local WebAssembly vision telemetry.</span>
           </div>
         </div>
         <div class="install-actions">
-          <button id="install-btn" class="btn btn-primary btn-sm install-action-btn">
-            <svg class="btn-icon-svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
-            </svg>
-            <span>Install App</span>
-          </button>
-          <button id="install-dismiss-btn" class="btn btn-ghost btn-sm">Later</button>
+          <button id="install-btn" class="btn btn-signal btn-sm" type="button">Install App</button>
+          <button id="install-dismiss-btn" class="btn btn-aluminum btn-sm" type="button">Later</button>
         </div>
       </div>
 
       <!-- =======================================================
-           VIEW 1: TRACKER / HOME VIEW
+           VIEW 1: TRACKER INSTRUMENT CHASSIS
            ======================================================= -->
-      <section id="home-view" class="home-view" aria-label="Study tracker and telemetry dashboard">
+      <section id="home-view" class="home-view" aria-label="Chrono-Optic study tracker instrument">
 
-        <!-- Top Row: Hero Card (~60%) and Live Computer Vision HUD (~40%) -->
-        <div class="hero-tracking-grid">
+        <!-- Unified Brushed Aluminum Housing -->
+        <div id="home-instrument" class="instrument-chassis" data-status="idle" data-calibrating="false">
+          <!-- Four Corner Chassis Fasteners -->
+          <span class="chassis-screw tl" aria-hidden="true"></span>
+          <span class="chassis-screw tr" aria-hidden="true"></span>
+          <span class="chassis-screw bl" aria-hidden="true"></span>
+          <span class="chassis-screw br" aria-hidden="true"></span>
 
-          <!-- Hero Focus Centerpiece Card -->
-          <div class="card hero-card glass-card" id="hero-card">
-            <div class="hero-card-sheen" aria-hidden="true"></div>
+          <!-- Two-Column Main Instrument Surface -->
+          <div class="instrument-deck">
 
-            <div class="hero-header-row">
-              <div id="status-chip" class="status-chip" data-status="idle">
-                <span class="status-dot"></span>
-                <span id="status-text" class="status-text">Ready to study</span>
-              </div>
-              <div class="hero-mode-pill">
-                <span class="pulse-indicator"></span>
-                <span>Focus Mode</span>
-              </div>
-            </div>
-
-            <!-- Central Digital Timer Display -->
-            <div class="timer-display-wrapper">
-              <div id="timer-display" class="timer-display font-mono" aria-live="polite">
-                00:00:00
-              </div>
-              <div class="timer-ambient-glow" aria-hidden="true"></div>
-            </div>
-
-            <!-- Sub-metrics: Active vs Paused Session Times -->
-            <div class="hero-subtimes">
-              <div class="subtime-chip">
-                <span class="subtime-indicator text-success">•</span>
-                <span class="subtime-label">Active today:</span>
-                <span id="stat-session-time" class="subtime-value font-mono">00:00:00</span>
-              </div>
-              <div class="subtime-chip">
-                <span class="subtime-indicator text-warning">•</span>
-                <span class="subtime-label">Paused time:</span>
-                <span id="stat-paused-time" class="subtime-value font-mono">00:00:00</span>
-              </div>
-            </div>
-
-            <!-- Primary Actions (Start & End Session) -->
-            <div class="timer-controls">
-              <button id="start-btn" class="btn btn-primary btn-lg btn-glow">
-                <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-                <span class="btn-text">Start Studying</span>
-              </button>
-              <button id="end-btn" class="btn btn-danger btn-lg hidden">
-                <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="5" y="5" width="14" height="14" rx="2"></rect>
-                </svg>
-                <span class="btn-text">End Session</span>
-              </button>
-            </div>
-
-            <!-- Contextual Nudge / Alert Notification Box -->
-            <div class="alert-display">
-              <div id="alert-card" class="alert-card glass-subtle">
-                <div id="alert-icon" class="alert-icon"></div>
-                <div id="alert-text" class="alert-text"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Live Computer-Vision Telemetry HUD -->
-          <div class="card live-tracking-card glass-card" id="live-panel">
-            <div class="card-header">
-              <div class="card-header-left">
-                <span class="card-title">Vision Telemetry</span>
-                <span class="card-tag">CV ENGINE</span>
-              </div>
-              <div id="live-status-chip" class="status-chip status-chip-sm" data-status="idle">
-                <span class="status-dot"></span>
-                <span id="live-status-text">Idle</span>
-              </div>
-            </div>
-
-            <div class="live-card-body">
-              <!-- Detection Pipeline Badges -->
-              <div class="live-section">
-                <div class="section-micro-header">
-                  <span>PIPELINE HEALTH</span>
-                  <span class="text-muted">5 STAGES</span>
+            <!-- LEFT: RECESSED CARBON CHRONOMETER CONSOLE -->
+            <div class="chronometer-console">
+              <div class="console-top-bar">
+                <div id="status-chip" class="console-status" data-status="idle">
+                  <svg class="status-target-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"></circle>
+                  </svg>
+                  <span class="status-prefix">STATUS:</span>
+                  <span id="status-text" class="status-text">READY TO STUDY</span>
                 </div>
-                <ul id="live-pipeline" class="pipeline-checklist">
-                  <li id="pipe-cam" class="pipe-item">Camera</li>
-                  <li id="pipe-model" class="pipe-item">Model</li>
-                  <li id="pipe-face" class="pipe-item">Face</li>
-                  <li id="pipe-focus" class="pipe-item">Screen</li>
-                  <li id="pipe-worker" class="pipe-item">Worker</li>
-                </ul>
+
+                <div id="signal-bars" class="signal-bars" data-level="0" title="Optical lock quality" aria-hidden="true">
+                  <span class="sig-bar b1"></span>
+                  <span class="sig-bar b2"></span>
+                  <span class="sig-bar b3"></span>
+                </div>
               </div>
 
-              <!-- Head Focus Gauge & Crosshair Grid -->
-              <div class="live-section">
-                <div class="section-micro-header">
-                  <span>SCREEN FOCUS ANGLE</span>
-                  <span id="live-focus-threshold-tag" class="threshold-pill font-mono">Cutoff: 50%</span>
+              <!-- Viewfinder-Bracketed Hero Timer -->
+              <div class="timer-frame">
+                <span class="bracket tl" aria-hidden="true"></span>
+                <span class="bracket tr" aria-hidden="true"></span>
+                <span class="bracket bl" aria-hidden="true"></span>
+                <span class="bracket br" aria-hidden="true"></span>
+
+                <div id="timer-display" class="timer-display font-mono" aria-live="polite">00:00:00</div>
+                <div class="timer-caption">VERIFIED FOCUS TIME</div>
+              </div>
+
+              <!-- Recessed Active / Paused Readouts -->
+              <div class="console-subtimes">
+                <div class="subtime-pill">
+                  <svg class="subtime-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <polyline points="12 7 12 12 15.5 14"></polyline>
+                  </svg>
+                  <span class="subtime-label">Active</span>
+                  <span id="stat-session-time" class="subtime-value font-mono">00:00:00</span>
                 </div>
-                <div class="focus-indicator-wrap">
-                  <!-- Radial Focus Gauge -->
-                  <div class="focus-gauge" id="focus-gauge-container">
-                    <svg viewBox="0 0 120 120" class="focus-gauge-svg" aria-hidden="true">
-                      <!-- Base Background Track Ring -->
-                      <circle class="focus-gauge-track" cx="60" cy="60" r="50" fill="none" stroke-width="8"/>
-                      <!-- Dynamic Animated Focus Arc -->
-                      <circle id="focus-arc" cx="60" cy="60" r="50" fill="none"
-                        stroke="var(--accent-primary)"
-                        stroke-width="8"
-                        stroke-linecap="round"
-                        stroke-dasharray="314.16"
-                        stroke-dashoffset="314.16"
-                        transform="rotate(-90 60 60)"/>
+                <div class="subtime-pill">
+                  <svg class="subtime-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <line x1="10" y1="9" x2="10" y2="15"></line>
+                    <line x1="14" y1="9" x2="14" y2="15"></line>
+                  </svg>
+                  <span class="subtime-label">Paused</span>
+                  <span id="stat-paused-time" class="subtime-value font-mono">00:00:00</span>
+                </div>
+              </div>
+
+              <!-- Physical Rectangular Instrument Switches -->
+              <div class="timer-controls">
+                <button id="start-btn" class="btn btn-signal btn-switch" type="button">
+                  <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <polygon points="6 4 20 12 6 20 6 4"></polygon>
+                  </svg>
+                  <span class="btn-text">Start Studying</span>
+                </button>
+                <button id="end-btn" class="btn btn-signal btn-switch hidden" type="button">
+                  <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
+                  </svg>
+                  <span class="btn-text">End Session</span>
+                </button>
+                <button id="recalibrate-btn" class="btn btn-aluminum btn-switch" type="button">
+                  <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <circle cx="12" cy="12" r="8"></circle>
+                    <circle cx="12" cy="12" r="2.5"></circle>
+                    <line x1="12" y1="2" x2="12" y2="6"></line>
+                    <line x1="12" y1="18" x2="12" y2="22"></line>
+                    <line x1="2" y1="12" x2="6" y2="12"></line>
+                    <line x1="18" y1="12" x2="22" y2="12"></line>
+                  </svg>
+                  <span class="btn-text">Recalibrate</span>
+                </button>
+              </div>
+
+              <!-- Recessed Console Alert / Error Strip -->
+              <div class="console-alert-slot">
+                <div id="alert-card" class="alert-card" role="status" aria-live="polite">
+                  <span id="alert-icon" class="alert-icon" aria-hidden="true"></span>
+                  <span id="alert-text" class="alert-text"></span>
+                </div>
+                <div id="live-error-banner" class="alert-card alert-error hidden" role="alert">
+                  <span class="alert-icon" aria-hidden="true">!</span>
+                  <span id="live-error-text" class="alert-text"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT: OPTICAL VIEWFINDER + HARDWARE CONTROLS -->
+            <div class="viewfinder-bay" id="live-panel">
+              <div class="viewfinder-main">
+                <div class="viewfinder-plate">
+                  <span class="plate-screw tl" aria-hidden="true"></span>
+                  <span class="plate-screw tr" aria-hidden="true"></span>
+                  <span class="plate-screw bl" aria-hidden="true"></span>
+                  <span class="plate-screw br" aria-hidden="true"></span>
+
+                  <!-- Engraved Outer Metallic Bezel -->
+                  <div class="viewfinder-bezel">
+                    <svg class="bezel-engraving-svg" viewBox="0 0 360 360" aria-hidden="true">
+                      <defs>
+                        <path id="bezel-top-arc" d="M 13,180 A 167,167 0 0,1 347,180" />
+                      </defs>
+                      <text class="bezel-engraved-text">
+                        <textPath href="#bezel-top-arc" startOffset="50%" text-anchor="middle">OPTICAL VIEWFINDER</textPath>
+                      </text>
                     </svg>
-                    <div class="focus-gauge-center">
-                      <span id="focus-pct-val" class="font-mono">0%</span>
-                      <span class="focus-gauge-label">SCORE</span>
+
+                    <!-- Circular Recessed Dark Lens -->
+                    <div class="viewfinder-lens">
+                      <!-- Live Mirrored Camera + Face Mesh Canvas (clipped to circular lens) -->
+                      <div id="live-camera-wrapper" class="live-camera-box" style="display: none;">
+                        <video id="live-video" autoplay playsinline muted></video>
+                        <canvas id="live-canvas"></canvas>
+                      </div>
+
+                      <!-- Precision Aviation / Optical HUD -->
+                      <svg id="viewfinder-hud-svg" class="viewfinder-hud-svg" viewBox="0 0 300 300" aria-hidden="true">
+                        <!-- Outer Radial Ticks -->
+                        <circle cx="150" cy="150" r="136" class="hud-ring-outer" />
+                        <circle cx="150" cy="150" r="120" class="hud-ring-ticks" stroke-dasharray="1 9.42" />
+
+                        <!-- Cardinal Orange Markers -->
+                        <polygon points="150,12 145,21 155,21" class="hud-cardinal" />
+                        <polygon points="150,288 145,279 155,279" class="hud-cardinal" />
+                        <polygon points="12,150 21,145 21,155" class="hud-cardinal" />
+                        <polygon points="288,150 279,145 279,155" class="hud-cardinal" />
+
+                        <!-- Focus / Calibration Progress Arc -->
+                        <circle class="hud-arc-track" cx="150" cy="150" r="128" fill="none" stroke-width="3" />
+                        <circle id="focus-arc" class="hud-arc-active" cx="150" cy="150" r="128" fill="none"
+                          stroke-width="3" stroke-linecap="round"
+                          stroke-dasharray="804.25" stroke-dashoffset="804.25"
+                          transform="rotate(-90 150 150)" />
+                        <circle id="calibration-arc" class="hud-arc-cal" cx="150" cy="150" r="128" fill="none"
+                          stroke-width="4" stroke-linecap="round"
+                          stroke-dasharray="804.25" stroke-dashoffset="804.25"
+                          transform="rotate(-90 150 150)" />
+
+                        <!-- Subtle Dotted Head-Pose Silhouette -->
+                        <g id="hud-face-silhouette" class="hud-silhouette">
+                          <ellipse cx="150" cy="136" rx="34" ry="44" stroke-dasharray="2 4" />
+                          <path d="M 90,235 Q 112,196 150,196 Q 188,196 210,235" stroke-dasharray="2 4" />
+                          <line x1="135" y1="128" x2="143" y2="128" />
+                          <line x1="157" y1="128" x2="165" y2="128" />
+                          <line x1="150" y1="132" x2="150" y2="144" />
+                        </g>
+
+                        <!-- Calibrated Inner Framing Brackets -->
+                        <g class="hud-inner-brackets">
+                          <path d="M 96,106 L 96,94 L 108,94" />
+                          <path d="M 204,106 L 204,94 L 192,94" />
+                          <path d="M 96,174 L 96,186 L 108,186" />
+                          <path d="M 204,174 L 204,186 L 192,186" />
+                        </g>
+
+                        <!-- Artificial Horizon (rotates & shifts with yaw/pitch) -->
+                        <g id="hud-horizon-group" class="hud-horizon-group">
+                          <line x1="48" y1="150" x2="252" y2="150" class="hud-horizon-line" />
+                          <line x1="48" y1="150" x2="252" y2="150" class="hud-horizon-ref" stroke-dasharray="2 4" />
+                        </g>
+
+                        <!-- Center Calibrated Neutral Crosshair -->
+                        <g class="hud-crosshair">
+                          <line x1="150" y1="136" x2="150" y2="164" />
+                          <line x1="136" y1="150" x2="164" y2="150" />
+                        </g>
+
+                        <!-- Right Pitch / Angle Scale -->
+                        <g class="hud-angle-scale font-mono">
+                          <text x="242" y="102">+15°</text>
+                          <text x="247" y="118">+10°</text>
+                          <text x="251" y="135">+5°</text>
+                          <text x="253" y="153">0°</text>
+                          <text x="251" y="170">-5°</text>
+                          <text x="247" y="187">-10°</text>
+                          <text x="242" y="203">-15°</text>
+                        </g>
+                      </svg>
+
+                      <!-- Moving Head Position Reticle Dot -->
+                      <div id="head-pos-dot" class="head-pos-dot" aria-hidden="true"></div>
+
+                      <!-- Hidden/Compact Focus Score Badge for Screen Readers & Gauge Sync -->
+                      <div class="hud-score-corner font-mono">
+                        <span id="focus-pct-val">0%</span>
+                      </div>
+
+                      <!-- Inline Viewfinder Calibration HUD (replaces full-screen modal) -->
+                      <div id="calibration-inline-hud" class="calibration-inline-hud" aria-live="polite">
+                        <div class="cal-inline-label">CALIBRATING NEUTRAL POSE</div>
+                        <div class="cal-inline-meta">
+                          <span id="calibration-countdown" class="font-mono">5s</span>
+                          <span id="calibration-substatus">Hold natural posture</span>
+                        </div>
+                        <div class="cal-inline-track">
+                          <div id="calibration-progress-bar" class="cal-inline-fill"></div>
+                        </div>
+                        <button id="calibration-cancel-btn" class="cal-inline-cancel" type="button">Cancel</button>
+                      </div>
+
+                      <!-- Bottom Lens Readouts -->
+                      <div class="lens-bottom-readout">
+                        <div class="yaw-pitch-row font-mono">
+                          <span>Y: <strong id="live-yaw">0</strong>°</span>
+                          <span>P: <strong id="live-pitch">0</strong>°</span>
+                        </div>
+                        <div class="viewfinder-sensor-strip font-mono">
+                          <span id="pipe-cam" class="pipe-item" title="Optical camera sensor">Cam</span>
+                          <span class="strip-sep" aria-hidden="true">|</span>
+                          <span id="pipe-model" class="pipe-item" title="MediaPipe WASM model">Model</span>
+                          <span class="strip-sep" aria-hidden="true">|</span>
+                          <span class="fps-readout"><strong id="live-fps">0</strong> FPS</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                </div>
 
-                  <!-- Geometric Directional Crosshair Reticle -->
-                  <div class="head-pos-grid" title="Head position relative to screen center">
-                    <div class="head-pos-grid-bg">
-                      <div class="head-pos-h-line"></div>
-                      <div class="head-pos-v-line"></div>
-                      <div class="head-pos-concentric"></div>
-                      <div id="head-pos-dot" class="head-pos-dot"></div>
+                <!-- Secondary Compact Diagnostic Strip below Viewfinder -->
+                <div class="viewfinder-meta-strip font-mono">
+                  <span id="live-status-chip" class="mini-status-chip" data-status="idle">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span id="live-status-text">Idle</span>
+                  </span>
+                  <span id="pipe-face" class="pipe-item">Face</span>
+                  <span id="pipe-focus" class="pipe-item">Screen</span>
+                  <span id="pipe-worker" class="pipe-item">Worker</span>
+                  <span class="meta-since-face">Gap: <strong id="live-since-face">0</strong>s</span>
+                  <span id="live-focus-threshold-tag" class="meta-cutoff">Min Focus: 50%</span>
+                </div>
+              </div>
+
+              <!-- Far-Right Physical Control Column (Calibrate + Min Focus Knob + 3-Way Angle Limit + Show Video) -->
+              <aside class="hardware-control-strip" aria-label="Optical hardware controls">
+                <div class="hw-control-group">
+                  <button id="cal-hw-btn" class="hw-push-btn" type="button" title="Set neutral head position" aria-label="Calibrate neutral head position">
+                    <span class="hw-push-cap"></span>
+                  </button>
+                  <span id="cal-led" class="hw-led" aria-hidden="true"></span>
+                  <span class="hw-label">CALIBRATE</span>
+                </div>
+
+                <div class="hw-control-group">
+                  <div class="rotary-dial-wrap">
+                    <div class="rotary-dial-stage">
+                      <svg class="dial-scale-svg" viewBox="0 0 74 74" aria-hidden="true">
+                        <path class="dial-scale-track" d="M 15.08 58.92 A 31 31 0 1 1 58.92 58.92" />
+                        <path id="threshold-dial-arc" class="dial-scale-active" d="M 15.08 58.92 A 31 31 0 1 1 58.92 58.92" />
+                      </svg>
+                      <div id="threshold-dial" class="hw-rotary-dial" role="slider" tabindex="0"
+                        title="Turn knob by dragging or scrolling to set minimum focus cutoff (50%–99%)"
+                        aria-label="Minimum focus threshold"
+                        aria-valuemin="50" aria-valuemax="99" aria-valuenow="50" aria-valuetext="50%">
+                        <span class="dial-knurl"></span>
+                        <span class="dial-notch"></span>
+                      </div>
                     </div>
-                    <div class="head-pos-labels font-mono">
-                      <span>Yaw: <strong id="live-yaw">0</strong>°</span>
-                      <span>Pitch: <strong id="live-pitch">0</strong>°</span>
-                    </div>
+                    <span id="dial-cutoff-label" class="hw-sub-label font-mono">50%</span>
                   </div>
+                  <span class="hw-label">MIN FOCUS</span>
                 </div>
-              </div>
 
-              <!-- Telemetry Metrics Grid -->
-              <div class="live-section">
-                <div class="section-micro-header">
-                  <span>RUNNING METRICS</span>
-                </div>
-                <div id="live-metrics" class="metrics-grid">
-                  <div class="metric-box glass-subtle">
-                    <span class="metric-name">Frame Rate</span>
-                    <span class="metric-val font-mono"><strong id="live-fps">0</strong> <span class="unit">FPS</span></span>
+                <div class="hw-control-group">
+                  <div id="cone-switch" class="hw-cone-switch" role="radiogroup" aria-label="Allowed head turn angle">
+                    <button type="button" class="cone-opt active" data-cone="low" aria-checked="true" role="radio" title="Relaxed head turn limit (35°)">35°</button>
+                    <button type="button" class="cone-opt" data-cone="medium" aria-checked="false" role="radio" title="Balanced head turn limit (25°)">25°</button>
+                    <button type="button" class="cone-opt" data-cone="high" aria-checked="false" role="radio" title="Strict head turn limit (15°)">15°</button>
                   </div>
-                  <div class="metric-box glass-subtle">
-                    <span class="metric-name">Since Face</span>
-                    <span class="metric-val font-mono"><strong id="live-since-face">0</strong> <span class="unit">s</span></span>
-                  </div>
+                  <span class="hw-label">HEAD ANGLE</span>
                 </div>
-              </div>
 
-              <!-- Live Camera Stream Toggle & Canvas Overlay -->
-              <div class="preview-toggle-row">
-                <label class="toggle-switch" for="live-preview-cb">
-                  <input id="live-preview-cb" type="checkbox">
-                  <span class="toggle-slider"></span>
-                </label>
-                <label for="live-preview-cb" class="toggle-text">Show Camera with Face Mesh</label>
-              </div>
-
-              <div id="live-camera-wrapper" class="live-camera-box" style="display: none;">
-                <div class="camera-viewport-frame">
-                  <video id="live-video" autoplay playsinline muted></video>
-                  <canvas id="live-canvas"></canvas>
-                  <div class="camera-hud-overlay" aria-hidden="true">
-                    <span class="hud-corner top-left"></span>
-                    <span class="hud-corner top-right"></span>
-                    <span class="hud-corner bottom-left"></span>
-                    <span class="hud-corner bottom-right"></span>
-                  </div>
+                <div class="hw-control-group hw-preview-group">
+                  <label class="hw-rocker-switch" for="live-preview-cb" title="Show or hide live camera feed with face mesh">
+                    <input id="live-preview-cb" type="checkbox">
+                    <span class="hw-rocker-track">
+                      <span class="hw-rocker-thumb"></span>
+                    </span>
+                  </label>
+                  <span class="hw-label">SHOW VIDEO</span>
                 </div>
-              </div>
+              </aside>
+            </div>
+          </div>
 
-              <!-- Error Banner -->
-              <div id="live-error-banner" class="alert-card alert-error hidden">
-                <svg class="alert-icon-svg text-danger" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+          <!-- AUXILIARY HARDWARE SWITCHES & TELEMETRY STRIP -->
+          <div class="aux-hardware-strip">
+            <div class="aux-switches-group">
+              <button id="hw-reading-btn" class="aux-toggle-btn" type="button" aria-pressed="false" title="Allow looking down at physical notes/books without pausing">
+                <span class="aux-led" aria-hidden="true"></span>
+                <span>NOTES MODE</span>
+              </button>
+              <button id="hw-sound-btn" class="aux-toggle-btn active" type="button" aria-pressed="true" title="Toggle focus audio chimes">
+                <span class="aux-led" aria-hidden="true"></span>
+                <span>SOUND ALERT</span>
+              </button>
+              <button id="hw-pip-btn" class="aux-toggle-btn aux-pip-btn" type="button" title="Toggle floating mini timer (Picture-in-Picture)">
+                <svg class="aux-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                  <rect x="12" y="11" width="7" height="6" rx="1"></rect>
                 </svg>
-                <span id="live-error-text" class="alert-text">Error goes here</span>
+                <span>MINI TIMER</span>
+              </button>
+            </div>
+
+            <div class="aux-telemetry-group font-mono">
+              <div class="aux-readout-cell">
+                <span class="aux-readout-label">FOCUS</span>
+                <strong id="hud-live-focus" class="aux-readout-val text-sage">—</strong>
+              </div>
+              <div class="aux-readout-cell">
+                <span class="aux-readout-label">DISTRACTIONS</span>
+                <strong id="hud-live-distractions" class="aux-readout-val text-orange">0</strong>
+              </div>
+              <div class="aux-goal-stepper">
+                <span class="aux-readout-label">DAILY GOAL</span>
+                <button id="goal-dec-btn" class="stepper-btn" type="button" aria-label="Decrease daily goal by 0.5 hours">−</button>
+                <strong id="hw-goal-val" class="aux-readout-val">6.0h</strong>
+                <button id="goal-inc-btn" class="stepper-btn" type="button" aria-label="Increase daily goal by 0.5 hours">+</button>
               </div>
             </div>
           </div>
 
-        </div>
-
-        <!-- Row 2: 3 Liquid Glass Summary Cards -->
-        <div class="summary-cards-row">
-          <div class="card mini-summary-card glass-card">
-            <div class="mini-summary-header">
-              <span class="mini-summary-label">Today's Study Time</span>
-              <div class="mini-summary-icon text-accent">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
-                </svg>
-              </div>
-            </div>
-            <div id="home-study-time" class="mini-summary-val font-mono text-accent">0h 0m</div>
-            <div class="mini-summary-caption">Verified active face time</div>
-          </div>
-
-          <div class="card mini-summary-card glass-card">
-            <div class="mini-summary-header">
-              <span class="mini-summary-label">Average Focus</span>
-              <div class="mini-summary-icon text-success">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 11.586 14.586 8H12z" clip-rule="evenodd"/>
-                </svg>
-              </div>
-            </div>
-            <div id="home-focus" class="mini-summary-val font-mono text-success">—</div>
-            <div class="mini-summary-caption">Screen orientation score</div>
-          </div>
-
-          <div class="card mini-summary-card glass-card">
-            <div class="mini-summary-header">
-              <span class="mini-summary-label">Distractions</span>
-              <div class="mini-summary-icon text-warning">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                </svg>
-              </div>
-            </div>
-            <div id="home-distractions" class="mini-summary-val font-mono text-warning">0</div>
-            <div class="mini-summary-caption">Total pauses & look-aways</div>
-          </div>
-        </div>
-
-        <!-- Row 3: Daily Goal & Streak Progress Card -->
-        <div class="card goal-streak-card glass-card">
-          <div class="goal-streak-top">
-            <div class="goal-title-group">
-              <span class="goal-heading">Daily Study Goal</span>
-              <span id="goal-progress-text" class="goal-progress-sub font-mono">0h of 4h (0%)</span>
-            </div>
-            <div id="home-streak-badge" class="streak-badge">
-              <svg class="streak-flame-icon" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.527.82-1.173 1.55-1.874 2.18-1.104.99-2.43 1.9-3.249 3.078C3.89 9.877 3.5 11.42 3.5 13a6.5 6.5 0 0013 0c0-1.848-.79-3.478-1.874-4.832a13.3 13.3 0 00-2.23-2.22 18.06 18.06 0 00-.001-3.395zM10 16a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+          <!-- BOTTOM ROW: INTEGRATED RECESSED PROGRESS CONSOLE -->
+          <div class="progress-console">
+            <div class="progress-sec-goal">
+              <svg class="console-mini-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"></circle>
+                <circle cx="12" cy="12" r="4.5"></circle>
+                <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>
               </svg>
-              <span>0 Day Streak</span>
+              <span class="progress-label">Today</span>
+              <span id="goal-progress-text" class="progress-val font-mono">0.0h / 6h</span>
+              <div id="goal-segments" class="goal-segments" aria-hidden="true"></div>
+              <div class="goal-bar-fallback hidden" aria-hidden="true">
+                <div id="goal-progress-bar" class="goal-fill" style="width: 0%;"></div>
+              </div>
+              <span id="goal-pct-badge" class="progress-pct font-mono">0%</span>
             </div>
-          </div>
-          <div class="goal-track glass-subtle">
-            <div id="goal-progress-bar" class="goal-fill" style="width: 0%;">
-              <div class="goal-fill-glow"></div>
+
+            <div class="progress-divider" aria-hidden="true"></div>
+
+            <div class="progress-sec-streak">
+              <svg class="console-mini-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+              <span class="progress-label">Streak:</span>
+              <div id="home-streak-badge" class="streak-value font-mono">
+                <span>0 days</span>
+              </div>
             </div>
+
+            <div class="progress-divider" aria-hidden="true"></div>
+
+            <button id="shortcut-analytics-btn" class="progress-shortcut-btn" type="button" title="Open Analytics View" aria-label="Go to Analytics view">
+              <svg class="console-mini-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                <line x1="4" y1="16" x2="4" y2="11"></line>
+                <line x1="10" y1="16" x2="10" y2="5"></line>
+                <line x1="16" y1="16" x2="16" y2="8"></line>
+              </svg>
+            </button>
           </div>
         </div>
 
-        <!-- Row 4: Activity Stream: Recent Events & Daily History -->
-        <div class="recent-columns-grid">
-          <div class="card recent-card glass-card">
-            <div class="card-header">
-              <span class="card-title">Live Event Stream</span>
-              <span class="recent-sub">Realtime Audit</span>
+        <!-- Secondary Audit Strip (Collapses automatically during active Focus Mode) -->
+        <details id="secondary-audit-drawer" class="audit-drawer">
+          <summary class="audit-drawer-summary">
+            <span>Session Audit &amp; Today Summary</span>
+            <span class="audit-summary-metrics font-mono">
+              <span>Study: <strong id="home-study-time">0s</strong></span>
+              <span>Focus: <strong id="home-focus">—</strong></span>
+              <span>Distractions: <strong id="home-distractions">0</strong></span>
+            </span>
+          </summary>
+          <div class="audit-drawer-body">
+            <div class="audit-col">
+              <div class="audit-col-header">Realtime Event Audit</div>
+              <ul id="home-recent-events" class="recent-events-list font-mono">
+                <li class="empty-recent-item">No tracking events recorded yet</li>
+              </ul>
             </div>
-            <ul id="home-recent-events" class="recent-events-list font-mono">
-              <li class="empty-recent-item">No tracking events recorded yet</li>
-            </ul>
+            <div class="audit-col">
+              <div class="audit-col-header">Recent Daily Log</div>
+              <div id="home-recent-sessions" class="recent-sessions-list">
+                <div class="empty-recent-item">No study time recorded yet</div>
+              </div>
+            </div>
           </div>
-
-          <div class="card recent-card glass-card">
-            <div class="card-header">
-              <span class="card-title">Daily Study Log</span>
-              <span class="recent-sub">Recent Sessions</span>
-            </div>
-            <div id="home-recent-sessions" class="recent-sessions-list">
-              <div class="empty-recent-item">No study time recorded yet</div>
-            </div>
-          </div>
-        </div>
+        </details>
 
       </section>
 
       <!-- =======================================================
-           VIEW 2: HISTORY & ANALYTICS DASHBOARD
+           VIEW 2: ANALYTICS INSTRUMENT PANEL
            ======================================================= -->
-      <section id="history-view" class="dashboard-view hidden" aria-label="Historical study dashboard">
+      <section id="history-view" class="dashboard-view hidden" aria-label="Historical study analytics">
+        <div class="instrument-chassis analytics-chassis">
+          <span class="chassis-screw tl" aria-hidden="true"></span>
+          <span class="chassis-screw tr" aria-hidden="true"></span>
+          <span class="chassis-screw bl" aria-hidden="true"></span>
+          <span class="chassis-screw br" aria-hidden="true"></span>
 
-        <!-- History Top Statistics Row -->
-        <div class="stats-row">
-          <div class="card stat-card glass-card">
-            <div class="stat-header">
-              <span class="stat-label">Total Focused Time</span>
-              <div class="stat-icon text-accent">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
-                </svg>
-              </div>
+          <!-- Top Metrics Strip -->
+          <div class="analytics-oled-strip">
+            <div class="oled-metric-cell">
+              <span class="oled-metric-label">TOTAL FOCUSED TIME</span>
+              <span id="dash-study-time" class="oled-metric-val font-mono text-sage">0s</span>
             </div>
-            <div id="dash-study-time" class="stat-value font-mono text-accent">0h 0m</div>
-          </div>
-
-          <div class="card stat-card glass-card">
-            <div class="stat-header">
-              <span class="stat-label">Overall Focus Score</span>
-              <div class="stat-icon text-success">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                </svg>
-              </div>
+            <div class="oled-metric-cell">
+              <span class="oled-metric-label">OVERALL FOCUS SCORE</span>
+              <span id="dash-focus" class="oled-metric-val font-mono">—</span>
             </div>
-            <div id="dash-focus" class="stat-value font-mono text-success">—</div>
+            <div class="oled-metric-cell">
+              <span class="oled-metric-label">TOTAL DISTRACTIONS</span>
+              <span id="dash-distractions" class="oled-metric-val font-mono text-orange">0</span>
+            </div>
           </div>
 
-          <div class="card stat-card glass-card">
-            <div class="stat-header">
-              <span class="stat-label">Total Distractions</span>
-              <div class="stat-icon text-warning">
-                <svg viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                </svg>
-              </div>
+          <!-- Diagnostic Breakdown Strip -->
+          <div class="analytics-breakdown-row">
+            <div class="breakdown-cell">
+              <span class="breakdown-label"><span class="led-dot warn"></span>Looking Away</span>
+              <span id="dist-look-away" class="breakdown-val font-mono">0</span>
             </div>
-            <div id="dash-distractions" class="stat-value font-mono text-warning">0</div>
+            <div class="breakdown-cell">
+              <span class="breakdown-label"><span class="led-dot danger"></span>Left Screen / Away</span>
+              <span id="dist-away" class="breakdown-val font-mono">0</span>
+            </div>
+            <div class="breakdown-cell">
+              <span class="breakdown-label"><span class="led-dot muted"></span>Lid Closed / Sleep</span>
+              <span id="dist-lid" class="breakdown-val font-mono">0</span>
+            </div>
           </div>
-        </div>
 
-        <!-- Distraction Breakdown Card -->
-        <div class="card glass-card">
-          <div class="card-header">
-            <span class="card-title">Distraction Diagnostic Breakdown</span>
-            <span class="card-tag">BREAKDOWN</span>
-          </div>
-          <div id="distraction-breakdown" class="distraction-breakdown">
-            <div class="distraction-item glass-subtle">
-              <div class="distraction-header">
-                <span class="distraction-dot look-away"></span>
-                <span class="distraction-name">Looking Away</span>
+          <!-- 7-Day Weekly Focus Chart Console -->
+          <div class="analytics-chart-console">
+            <div class="chart-header-row">
+              <div>
+                <h2 class="instrument-section-title">Weekly Focus Rhythm</h2>
+                <p class="instrument-section-sub">Daily verified hours against target goal</p>
               </div>
-              <span class="distraction-count font-mono" id="dist-look-away">0</span>
+              <span id="weekly-total" class="chart-total-badge font-mono">0s</span>
             </div>
-            <div class="distraction-item glass-subtle">
-              <div class="distraction-header">
-                <span class="distraction-dot away"></span>
-                <span class="distraction-name">Left Screen / Away</span>
-              </div>
-              <span class="distraction-count font-mono" id="dist-away">0</span>
-            </div>
-            <div class="distraction-item glass-subtle">
-              <div class="distraction-header">
-                <span class="distraction-dot lid-closed"></span>
-                <span class="distraction-name">Lid Closed / Sleep</span>
-              </div>
-              <span class="distraction-count font-mono" id="dist-lid">0</span>
+            <div id="chart-container" class="chart-container"></div>
+            <div class="chart-footer-row font-mono">
+              <span>Daily Target: <strong id="daily-goal-display">6h</strong></span>
+              <div id="streak-badge" class="streak-value"><span>0 days</span></div>
             </div>
           </div>
-        </div>
 
-        <!-- 7-Day Liquid Glass Study Chart -->
-        <div class="card glass-card">
-          <div class="card-header">
-            <div>
-              <span class="card-title">Weekly Focus Rhythm</span>
-              <p class="card-subtitle text-muted">Daily accumulated hours against target goal</p>
+          <!-- Days Learned Log -->
+          <div class="analytics-log-console">
+            <div class="chart-header-row">
+              <h2 class="instrument-section-title">Days Learned Archive</h2>
+              <span class="instrument-section-sub font-mono">LOCAL INDEXEDDB</span>
             </div>
-            <span id="weekly-total" class="chart-meta-value font-mono text-accent">0h total</span>
-          </div>
-          <div id="chart-container" class="chart-container">
-            <!-- Rendered by JS -->
-          </div>
-          <div class="chart-meta">
-            <div class="chart-meta-item">
-              Daily Target: <span id="daily-goal-display" class="chart-meta-value font-mono">6h</span>
-            </div>
-            <div id="streak-badge" class="streak-badge">
-              <svg class="streak-flame-icon" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.527.82-1.173 1.55-1.874 2.18-1.104.99-2.43 1.9-3.249 3.078C3.89 9.877 3.5 11.42 3.5 13a6.5 6.5 0 0013 0c0-1.848-.79-3.478-1.874-4.832a13.3 13.3 0 00-2.23-2.22 18.06 18.06 0 00-.001-3.395zM10 16a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
-              </svg>
-              <span>0 day streak</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Daily Historical Records List -->
-        <div class="card glass-card">
-          <div class="card-header">
-            <span class="card-title">Days Learned Archive</span>
-            <span class="card-tag">HISTORY</span>
-          </div>
-          <div id="session-list" class="session-list">
-            <div class="empty-state">
-              <div class="empty-state-icon text-muted">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                </svg>
+            <div id="session-list" class="session-list">
+              <div class="empty-state">
+                <div class="empty-state-text">No recorded study days yet. Begin your first focused session on the tracker.</div>
               </div>
-              <div class="empty-state-text">No recorded study days yet. Begin your first focused session on the tracker!</div>
             </div>
           </div>
-        </div>
 
-        <!-- Data Action Buttons -->
-        <div class="data-actions">
-          <button id="export-csv-btn" class="btn btn-secondary btn-sm">
-            <svg class="icon-svg-sm" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
-            </svg>
-            <span>Export CSV Archive</span>
-          </button>
-          <button id="delete-all-btn" class="btn btn-ghost btn-sm text-danger">
-            <svg class="icon-svg-sm" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
-            </svg>
-            <span>Clear All Local Records</span>
-          </button>
+          <!-- Data Actions -->
+          <div class="data-actions">
+            <button id="export-csv-btn" class="btn btn-aluminum btn-sm" type="button">Export CSV Archive</button>
+            <button id="delete-all-btn" class="btn btn-danger-outline btn-sm" type="button">Clear All Local Records</button>
+          </div>
         </div>
       </section>
 
@@ -663,17 +681,17 @@
   </div>
 
   <!-- ============================================
-       SETTINGS PANEL — macOS Pro Liquid Glass Drawer
+       PREFERENCES DRAWER
        ============================================ -->
-  <div id="settings-overlay" class="settings-overlay"></div>
-  <aside id="settings-panel" class="settings-panel glass-elevated" role="dialog" aria-label="Application Settings">
+  <div id="settings-overlay" class="settings-overlay" aria-hidden="true"></div>
+  <aside id="settings-panel" class="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Application Settings" inert>
     <div class="settings-header">
       <div class="settings-title-group">
-        <h2 class="settings-title">Preferences</h2>
-        <span class="settings-subtitle">Vision & Threshold Configuration</span>
+        <h2 class="settings-title">Instrument Preferences</h2>
+        <span class="settings-subtitle">Optical Threshold &amp; Calibration</span>
       </div>
-      <button id="settings-close-btn" class="settings-close-btn" aria-label="Close preferences drawer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button id="settings-close-btn" class="settings-close-btn" aria-label="Close preferences drawer" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
@@ -681,29 +699,27 @@
     </div>
 
     <div class="settings-body">
-
-      <!-- Section: Detection & Vision Calibration -->
       <div class="settings-section">
-        <div class="settings-section-title">DETECTION & ALGORITHM</div>
+        <div class="settings-section-title">DETECTION &amp; OPTICS</div>
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Face Focus Threshold</div>
-            <div class="setting-description">Timer automatically pauses if orientation score falls below this cutoff</div>
+            <label class="setting-label" for="setting-focus-threshold">Face Focus Threshold</label>
+            <div class="setting-description">Pauses timer when focus falls below this cutoff</div>
           </div>
           <div class="setting-control-slider">
             <input id="setting-focus-threshold" class="range-slider" type="range" min="50" max="99" value="50">
-            <span id="setting-focus-threshold-val" class="font-mono text-accent">50%</span>
+            <span id="setting-focus-threshold-val" class="font-mono text-orange">50%</span>
           </div>
         </div>
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Angle Sensitivity Cone</div>
-            <div class="setting-description">Head angle tolerance (Low = 35°, Medium = 25°, High = 15°)</div>
+            <label class="setting-label" for="setting-sensitivity">Angle Sensitivity Cone</label>
+            <div class="setting-description">Head angle tolerance (35° / 25° / 15°)</div>
           </div>
           <div class="select-wrap">
-            <select id="setting-sensitivity" class="select-glass">
+            <select id="setting-sensitivity" class="select-instrument">
               <option value="low" selected>Low (35° tolerance)</option>
               <option value="medium">Medium (25° tolerance)</option>
               <option value="high">High (15° strict)</option>
@@ -713,24 +729,11 @@
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Neutral Pose Calibration</div>
-            <div class="setting-description">Re-center head pose baseline to match your current chair and screen setup</div>
-          </div>
-          <button id="recalibrate-btn" class="btn btn-secondary btn-sm" type="button">
-            <svg class="icon-svg-sm" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
-            </svg>
-            <span>Recalibrate</span>
-          </button>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-text">
             <div class="setting-label">Look-Away Leniency</div>
-            <div class="setting-description">Seconds before an off-screen glance pauses timer</div>
+            <div class="setting-description">Seconds before off-screen glance pauses timer</div>
           </div>
           <div class="input-wrap">
-            <input id="setting-lookaway-time" class="input-number-glass font-mono" type="number" min="1" max="60" value="3">
+            <input id="setting-lookaway-time" class="input-number-instrument font-mono" type="number" min="1" max="60" value="3" aria-label="Look-away leniency seconds">
             <span class="input-unit">sec</span>
           </div>
         </div>
@@ -738,18 +741,18 @@
         <div class="setting-row">
           <div class="setting-text">
             <div class="setting-label">Absent / Away Timeout</div>
-            <div class="setting-description">Seconds with no face detected before marking session away</div>
+            <div class="setting-description">Seconds with no face before marking away</div>
           </div>
           <div class="input-wrap">
-            <input id="setting-away-time" class="input-number-glass font-mono" type="number" min="5" max="120" value="10">
+            <input id="setting-away-time" class="input-number-instrument font-mono" type="number" min="5" max="120" value="10" aria-label="Absent away timeout seconds">
             <span class="input-unit">sec</span>
           </div>
         </div>
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Reading Notes Mode</div>
-            <div class="setting-description">Permits looking down toward desk notes or books without pausing</div>
+            <label class="setting-label" for="setting-reading-mode">Reading Notes Mode</label>
+            <div class="setting-description">Permits looking down at desk notes without pausing</div>
           </div>
           <label class="toggle-switch">
             <input id="setting-reading-mode" type="checkbox">
@@ -758,30 +761,26 @@
         </div>
       </div>
 
-      <!-- Section: Productivity Goals -->
       <div class="settings-section">
         <div class="settings-section-title">STUDY TARGETS</div>
-
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Daily Study Target</div>
-            <div class="setting-description">Cumulative verified hours desired per calendar date</div>
+            <label class="setting-label" for="setting-daily-goal">Daily Study Target</label>
+            <div class="setting-description">Verified study hours desired per day</div>
           </div>
           <div class="input-wrap">
-            <input id="setting-daily-goal" class="input-number-glass font-mono" type="number" min="0.5" max="16" step="0.5" value="6">
+            <input id="setting-daily-goal" class="input-number-instrument font-mono" type="number" min="0.5" max="16" step="0.5" value="6">
             <span class="input-unit">hrs</span>
           </div>
         </div>
       </div>
 
-      <!-- Section: Audio & System Notifications -->
       <div class="settings-section">
-        <div class="settings-section-title">NOTIFICATIONS & AUDIO</div>
-
+        <div class="settings-section-title">AUDIO &amp; NOTIFICATIONS</div>
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Auditory Focus Cues</div>
-            <div class="setting-description">Gentle synthesized harmonic chime on pause/resume</div>
+            <label class="setting-label" for="setting-sound">Auditory Focus Cues</label>
+            <div class="setting-description">Subtle harmonic tone on pause/resume</div>
           </div>
           <label class="toggle-switch">
             <input id="setting-sound" type="checkbox" checked>
@@ -791,7 +790,7 @@
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Chime Volume</div>
+            <label class="setting-label" for="setting-volume">Chime Volume</label>
           </div>
           <div class="setting-control-slider">
             <input id="setting-volume" class="range-slider" type="range" min="0" max="100" value="50">
@@ -800,8 +799,8 @@
 
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">System Desktop Notifications</div>
-            <div class="setting-description">Background OS alert nudges when focus is interrupted</div>
+            <label class="setting-label" for="setting-notifications">System Notifications</label>
+            <div class="setting-description">Desktop nudges when focus breaks</div>
           </div>
           <label class="toggle-switch">
             <input id="setting-notifications" type="checkbox" checked>
@@ -810,14 +809,12 @@
         </div>
       </div>
 
-      <!-- Section: Hardware Camera Options -->
       <div class="settings-section">
-        <div class="settings-section-title">CAMERA HARDWARE</div>
-
+        <div class="settings-section-title">OPTICAL VIEWFINDER</div>
         <div class="setting-row">
           <div class="setting-text">
-            <div class="setting-label">Live Camera Feed In-Page</div>
-            <div class="setting-description">Render video mirror with face landmark overlay (local only)</div>
+            <label class="setting-label" for="setting-camera-preview">Live Camera Feed &amp; Face Mesh</label>
+            <div class="setting-description">Synced with the hardware PREVIEW toggle</div>
           </div>
           <label class="toggle-switch">
             <input id="setting-camera-preview" type="checkbox">
@@ -825,15 +822,12 @@
           </label>
         </div>
       </div>
-
     </div>
   </aside>
 
-  <!-- ====== Toast Notification Container ====== -->
+  <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- ====== Core Application Script ====== -->
   <script src="app.js"></script>
-
 </body>
 </html>
