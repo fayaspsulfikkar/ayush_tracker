@@ -3288,6 +3288,105 @@ describe('Hardware Instrument & Toast Controls', () => {
   });
 });
 
+describe('Background Tab & Workspace Continuity', () => {
+  test('runDetection updates focusPctVal and statusText while document.hidden is true using frameSourceOverride', () => {
+    const prevHidden = document.hidden;
+    const prevLandmarker = state.camera.faceLandmarker;
+    const prevDetecting = state.camera.isDetecting;
+    const prevStatus = state.status;
+    const prevActive = state.session.active;
+    const prevBuffer = state.headPose.buffer.slice();
+    const prevLastDetectMono = state.camera._lastDetectMono;
+
+    // Neutral centered face landmarks (nose tip=4, cheeks=234/454, eyes=33/263, mouth=61/291, forehead=10, chin=152)
+    const landmarks = Array.from({ length: 468 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+    landmarks[4] = { x: 0.5, y: 0.5, z: 0 };
+    landmarks[234] = { x: 0.35, y: 0.5, z: 0 };
+    landmarks[454] = { x: 0.65, y: 0.5, z: 0 };
+    landmarks[33] = { x: 0.42, y: 0.42, z: 0 };
+    landmarks[263] = { x: 0.58, y: 0.42, z: 0 };
+    landmarks[61] = { x: 0.44, y: 0.58, z: 0 };
+    landmarks[291] = { x: 0.56, y: 0.58, z: 0 };
+    landmarks[10] = { x: 0.5, y: 0.32, z: 0 };
+    landmarks[152] = { x: 0.5, y: 0.68, z: 0 };
+
+    let receivedSource = null;
+    try {
+      document.hidden = true;
+      state.session.active = true;
+      state.camera.isDetecting = true;
+      state.camera._lastDetectMono = 1000;
+      state.status = 'studying';
+      DOM.focusPctVal.textContent = '0%';
+      DOM.statusText.textContent = 'LOCKED IN';
+      state.camera.faceLandmarker = {
+        detectForVideo(src) {
+          receivedSource = src;
+          return { faceLandmarks: [landmarks] };
+        }
+      };
+
+      const fakeBitmap = { width: 640, height: 480 };
+      runDetection(2000000, 1500, fakeBitmap);
+
+      assert.equal(receivedSource, fakeBitmap);
+      assert.match(DOM.focusPctVal.textContent, /^\d+%$/);
+      assert.notEqual(DOM.focusPctVal.textContent, '0%');
+      assert.match(DOM.statusText.textContent, /^LOCKED IN \(\d+%\)$/);
+    } finally {
+      document.hidden = prevHidden;
+      state.camera.faceLandmarker = prevLandmarker;
+      state.camera.isDetecting = prevDetecting;
+      state.status = prevStatus;
+      state.session.active = prevActive;
+      state.headPose.buffer = prevBuffer;
+      state.camera._lastDetectMono = prevLastDetectMono;
+    }
+  });
+
+  test('evaluateCameraHealth tolerates 1 Hz background frames up to 4000ms when hidden', () => {
+    const prevHidden = document.hidden;
+    const prevDetecting = state.camera.isDetecting;
+    const prevLastFrame = state.camera.lastFrameTime;
+    const prevLastDet = state.camera.lastDetectionTime;
+    const prevSeq = state.camera.frameSeq;
+    const prevTickSeq = state.camera._lastTickFrameSeq;
+    const prevMsSince = state.camera._msSinceLastFrame;
+    const prevLastTick = state.lastTickTimestamp;
+
+    try {
+      state.camera.isDetecting = true;
+      state.camera.lastFrameTime = 10000;
+      state.camera.lastDetectionTime = 10000;
+      state.camera.frameSeq = 5;
+      state.camera._lastTickFrameSeq = 5;
+      state.camera._msSinceLastFrame = 2500;
+      state.lastTickTimestamp = 12500;
+
+      document.hidden = true;
+      const hiddenHealth = evaluateCameraHealth(13500, true, 1000);
+      assert.equal(hiddenHealth.isStalled, false);
+
+      const hiddenOverLimit = evaluateCameraHealth(14600, true, 1100);
+      assert.equal(hiddenOverLimit.isStalled, true);
+
+      document.hidden = false;
+      state.camera._msSinceLastFrame = 2500;
+      const visibleHealth = evaluateCameraHealth(13500, true, 1000);
+      assert.equal(visibleHealth.isStalled, true);
+    } finally {
+      document.hidden = prevHidden;
+      state.camera.isDetecting = prevDetecting;
+      state.camera.lastFrameTime = prevLastFrame;
+      state.camera.lastDetectionTime = prevLastDet;
+      state.camera.frameSeq = prevSeq;
+      state.camera._lastTickFrameSeq = prevTickSeq;
+      state.camera._msSinceLastFrame = prevMsSince;
+      state.lastTickTimestamp = prevLastTick;
+    }
+  });
+});
+
 
 
 

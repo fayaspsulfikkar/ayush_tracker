@@ -240,6 +240,9 @@ const state = {
   camera: {
     stream: null,              // MediaStream from getUserMedia
     videoTrack: null,          // the video track (for detecting camera loss)
+    imageCapture: null,        // ImageCapture instance for background frame grabs
+    _bgGrabInFlight: false,    // prevents overlapping async grabFrame calls
+    _lastDetectMono: null,     // monotonic timestamp guard for MediaPipe detectForVideo
     faceLandmarker: null,      // MediaPipe FaceLandmarker instance
     isDetecting: false,        // is the detection loop running?
     detectionRAF: null,        // requestAnimationFrame ID
@@ -1423,6 +1426,11 @@ async function startCamera() {
 
     state.camera.stream = stream;
     state.camera.videoTrack = stream.getVideoTracks()[0];
+    state.camera.imageCapture = (typeof ImageCapture === 'function' && state.camera.videoTrack)
+      ? new ImageCapture(state.camera.videoTrack)
+      : null;
+    state.camera._bgGrabInFlight = false;
+    state.camera._lastDetectMono = null;
 
     // Show video in the preview element (even if container is hidden)
     DOM.cameraPreview.srcObject = stream;
@@ -1469,6 +1477,9 @@ function stopCamera() {
     state.camera.stream = null;
     state.camera.videoTrack = null;
   }
+  state.camera.imageCapture = null;
+  state.camera._bgGrabInFlight = false;
+  state.camera._lastDetectMono = null;
 
   if (DOM.cameraPreview) DOM.cameraPreview.srcObject = null;
   if (DOM.cameraIndicator) {
@@ -1701,8 +1712,14 @@ function smoothHeadPose(reading) {
   const buf = state.headPose.buffer;
   buf.push(reading);
 
+  // At 1 Hz in background tabs, cap smoothing to 2 frames so brief turns recover within ~1-2s
+  const isHidden = typeof document !== 'undefined' && Boolean(document.hidden);
+  const maxSamples = isHidden
+    ? Math.min(state.headPose.bufferSize, 2)
+    : state.headPose.bufferSize;
+
   // Keep only the last N readings
-  while (buf.length > state.headPose.bufferSize) {
+  while (buf.length > maxSamples) {
     buf.shift();
   }
 
@@ -1887,6 +1904,7 @@ function startDetectionLoop() {
   state.camera.frameSeq = 0;
   state.camera._lastTickFrameSeq = 0;
   state.camera._msSinceLastFrame = 0;
+  state.camera._lastDetectMono = null;
   state.headPose.buffer = [];
   updatePipeline('Face', 'loading', '⏳ Face Searching…');
 
@@ -1928,9 +1946,10 @@ function stopDetectionLoop() {
 let frameCount = 0;
 let lastFpsTime = Date.now();
 
-function runDetection(wallNowOverride, monotonicOverride) {
+function runDetection(wallNowOverride, monotonicOverride, frameSourceOverride = null) {
   const faceLandmarker = state.camera.faceLandmarker;
   const video = DOM.cameraPreview;
+  const source = frameSourceOverride || video;
   const wallNow = typeof wallNowOverride === 'number' ? wallNowOverride : Date.now();
   const monoNow = typeof monotonicOverride === 'number'
     ? monotonicOverride
@@ -1940,16 +1959,26 @@ function runDetection(wallNowOverride, monotonicOverride) {
   state.camera.lastAttemptTime = wallNow;
   state.camera.lastAttemptMonotonic = monoNow;
 
+  const sourceReady = frameSourceOverride
+    ? ((frameSourceOverride.width || frameSourceOverride.videoWidth || 0) > 0)
+    : (video && video.readyState >= 2);
+
   // Video-not-ready conditions must NOT update lastFrameTime, lastFaceTime, or appear healthy
-  if (!faceLandmarker || !video || video.readyState < 2) {
+  if (!faceLandmarker || !source || !sourceReady) {
     updatePipeline('Face', 'warn', '⚠️ Video Not Ready');
     return;
   }
 
-  // Run face detection on the current video frame
+  // Run face detection on the current video frame or grabbed ImageBitmap.
+  // Keep detectTimestamp strictly non-decreasing for MediaPipe without altering monoNow accounting.
   let results;
   try {
-    results = faceLandmarker.detectForVideo(video, monoNow);
+    const prevDetectMono = state.camera._lastDetectMono;
+    const detectTimestamp = (typeof prevDetectMono === 'number' && monoNow <= prevDetectMono)
+      ? prevDetectMono + 1
+      : monoNow;
+    state.camera._lastDetectMono = detectTimestamp;
+    results = faceLandmarker.detectForVideo(source, detectTimestamp);
   } catch (err) {
     // Detection failed: do NOT update lastFrameTime or lastFaceTime
     return;
@@ -2060,7 +2089,8 @@ function runDetection(wallNowOverride, monotonicOverride) {
     const cutoff = state.settings.focusThreshold || 50;
     const isFacingScreen = focusScore >= cutoff;
 
-    // ── Update the Focus gauge only when tab is visible to minimize background headroom ──
+    // ── Update the Focus gauge only when tab is visible to minimize background headroom,
+    //    but always keep focus text & status readout synchronized in the DOM ──
     if (!document.hidden) {
       updateFocusIndicator(smoothed, focusScore);
 
@@ -2071,6 +2101,16 @@ function runDetection(wallNowOverride, monotonicOverride) {
         } else {
           updatePipeline('Focus', 'warn', `👀 Focus Low (${focusScore}% < ${cutoff}%)`);
         }
+      }
+    } else {
+      if (DOM.focusPctVal) {
+        DOM.focusPctVal.textContent = focusScore + '%';
+        DOM.focusPctVal.style.color = isFacingScreen
+          ? 'var(--optical-sage-hud)'
+          : 'var(--signal-orange-hud)';
+      }
+      if (state.status === 'studying' && DOM.statusText) {
+        DOM.statusText.textContent = `LOCKED IN (${focusScore}%)`;
       }
     }
 
@@ -2615,7 +2655,34 @@ function startWorker() {
         state.camera.stream &&
         state.camera.faceLandmarker
       ) {
-        runDetection(e.data.timestamp, mainMono);
+        const trackReady = state.camera.videoTrack && state.camera.videoTrack.readyState === 'live';
+        if (state.camera.imageCapture && trackReady) {
+          if (!state.camera._bgGrabInFlight) {
+            state.camera._bgGrabInFlight = true;
+            state.camera.imageCapture.grabFrame()
+              .then((bitmap) => {
+                try {
+                  if (state.camera.isDetecting) {
+                    runDetection(Date.now(), getMonotonicNow(), bitmap);
+                  }
+                } finally {
+                  if (bitmap && typeof bitmap.close === 'function') {
+                    bitmap.close();
+                  }
+                }
+              })
+              .catch(() => {
+                if (state.camera.isDetecting) {
+                  runDetection(e.data.timestamp, mainMono);
+                }
+              })
+              .finally(() => {
+                state.camera._bgGrabInFlight = false;
+              });
+          }
+        } else {
+          runDetection(e.data.timestamp, mainMono);
+        }
       }
       handleTick({
         ...e.data,
@@ -2687,7 +2754,11 @@ function evaluateCameraHealth(now, hasMonotonic, monotonicDelta) {
   }
 
   const msSinceFrame = cam._msSinceLastFrame || 0;
-  const isStalled = msSinceFrame > CONFIG.stallThresholdMs;
+  const isHidden = typeof document !== 'undefined' && Boolean(document.hidden);
+  const effectiveStallThresholdMs = isHidden
+    ? Math.max(CONFIG.stallThresholdMs, 4000)
+    : CONFIG.stallThresholdMs;
+  const isStalled = msSinceFrame > effectiveStallThresholdMs;
   const isCameraActive = !isStalled;
   return { isCameraActive, isStalled, latestFrameWall };
 }
@@ -5804,6 +5875,11 @@ function init() {
       if (document.hidden && state.session.active) {
         saveTodayToLocalStorage();
         autoSaveSession();
+      } else if (!document.hidden && state.camera.stream && DOM.cameraPreview && DOM.cameraPreview.paused) {
+        try {
+          const playRes = DOM.cameraPreview.play();
+          if (playRes && typeof playRes.catch === 'function') playRes.catch(() => {});
+        } catch (_) { }
       }
     });
     // Page Lifecycle API signals for browser tab freeze/suspension

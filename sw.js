@@ -17,7 +17,7 @@
    When you update the app, bump CACHE_VERSION to force a refresh.
    ============================================ */
 
-const CACHE_VERSION = 'ayush-tracker-v17';
+const CACHE_VERSION = 'ayush-tracker-v18';
 
 // List of files to pre-cache when the service worker installs.
 // These files will be available offline immediately after first load.
